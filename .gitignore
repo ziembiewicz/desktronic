@@ -1,0 +1,5 @@
+# ESPHome: secrets and the local build directory never go into the repository
+secrets.yaml
+.esphome/
+# Manufacturer documents are not freely licensed — link to the source instead
+*.pdf

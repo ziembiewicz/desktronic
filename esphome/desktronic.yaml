@@ -1,0 +1,83 @@
+# Desktronic HomePro (Jiecang JCB36NE2A-230 control box) — Seeed XIAO ESP32-C6 on the box's free RJ12 port "F".
+#
+# The desk logic comes from DeskUp Pro (SmartHomeGuys/DeskUp-Pro-Controller-RJ12), fetched at build time and
+# pinned to a commit. Its license forbids redistribution, so DeskUp code is NOT copied here — only referenced.
+# We use the author's common/c6-chip-config.yaml (XIAO C6: UART on D0/D1, antenna switch on GPIO3, no hotspot),
+# which itself includes common/base.yaml.
+#
+# This file contains only our overrides: the "retail" extras removed (improv, web_server, OTA over HTTP),
+# encrypted API, full Wi-Fi power, diagnostics and a boot-time fix for empty memory presets.
+# Secrets only via !secret (see secrets.yaml.example).
+#
+# The desk's data lines run at 5 V logic (measured) and are wired DIRECTLY to the ESP32 — outside the ESP32
+# input spec, a conscious choice for a test board. A BSS138 level shifter is the proper fix. Wiring: ../docs/wiring.md
+
+substitutions:
+  name: "desktronic"
+  friendly_name: "Biurko"
+  # Pins from the author's c6-chip-config.yaml: TX = GPIO1 (D1) → desk, RX = GPIO0 (D0) ← desk.
+
+packages:
+  deskup:
+    url: https://github.com/SmartHomeGuys/DeskUp-Pro-Controller-RJ12
+    ref: ac170d39373958cd679ece7ac82d9432b3f14728
+    files: [common/c6-chip-config.yaml]
+
+esphome:
+  on_boot:
+    # Memory presets M1–M4 (and the current height) arrive only as the controller's reply to query 0x07.
+    # DeskUp sends it once, right after boot, without a wake-up — a sleeping controller drops it and M1–M4
+    # stay "unknown" until the next reboot. We ask again, with a wake-up first.
+    - priority: -100
+      then:
+        - delay: 10s
+        - uart.write: [0xF1, 0xF1, 0x2B, 0x00, 0x2B, 0x7E]  # Stop, used as a wake-up (same as "Send Wake Up Cmd")
+        - delay: 500ms
+        - uart.write: [0xF1, 0xF1, 0x07, 0x00, 0x07, 0x7E]  # query height and memory presets
+        - delay: 5s
+        - if:
+            condition:
+              lambda: 'return !id(sensor_deskm1).has_state();'
+            then:
+              - uart.write: [0xF1, 0xF1, 0x2B, 0x00, 0x2B, 0x7E]
+              - delay: 500ms
+              - uart.write: [0xF1, 0xF1, 0x07, 0x00, 0x07, 0x7E]
+
+api:
+  encryption:
+    key: !secret desktronic_api_key
+
+ota:
+  # OTA encrypted with the same key as the API (ESPHome 2026.9 recommendation instead of an OTA password).
+  - id: !extend ota_esphome
+    encryption: {}
+  - id: !remove ota_http_request
+
+wifi:
+  ssid: !secret wifi_iot_ssid
+  password: !secret wifi_iot_password
+  # The author sets 9.5 dB; under the desk the access point heard the board at −79…−93 dBm and it kept
+  # dropping off. Full power fixed it — and reset_reason below would reveal brownouts if it didn't.
+  output_power: 20dB
+  # DeskUp sets name_add_mac_suffix: true, so the board announces itself as desktronic-<mac>.local while
+  # Device Builder looks for desktronic.local and shows it as offline. Give Builder the real address.
+  use_address: !secret desktronic_address
+
+# Diagnostics: signal strength and the cause of the last reboot.
+debug:
+  update_interval: 60s
+
+sensor:
+  - platform: wifi_signal
+    name: "Wi-Fi signal"
+    update_interval: 60s
+
+text_sensor:
+  - platform: debug
+    reset_reason:
+      name: "Reset reason"
+
+http_request: !remove
+improv_serial: !remove
+esp32_improv: !remove
+web_server: !remove
