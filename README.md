@@ -64,8 +64,8 @@ desk. `esphome/desktronic.yaml` contains only overrides on top of it:
 
 ## Meeting reminder (optional)
 
-Stand up for your meetings without thinking about it. 30 s before a meeting the desk gives a short nudge (a
-small move up and back down); at the start it nudges twice, pauses for 3 s and rises to memory preset **M2**
+Stand up for your meetings without thinking about it. 30 s before a meeting the desk gives a short nudge (it
+goes 3 mm up and back down, which you feel rather than see); at the start it nudges twice, pauses for 3 s and rises to memory preset **M2**
 (set M2 to your standing height first). The start time comes from the reminder that Outlook on the web shows
 as a Windows notification.
 

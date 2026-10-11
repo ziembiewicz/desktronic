@@ -1,9 +1,11 @@
-# One nudge = a single tap up, then a single tap down (about 1.5 cm each way; the control box stops
-# by itself). Used as a "heads up" before the desk moves on its own.
-# Fixed pauses instead of waiting for the desk status: the status sensor updates once a second and can
-# miss a move that lasts under a second. 2.5 s covers the measured reaction (up to 0.7 s) plus the move
-# (up to 1 s). The ESPHome command scripts run in mode single and drop a command sent while the
-# previous one still runs, so the pause must not be shortened.
+# One nudge = the desk goes 3 mm up and back to where it started: a short buzz you feel under your
+# hands, used as a "heads up" before the desk moves on its own.
+# It uses the "go to height" command, not the nudge buttons: a nudge button moves the desk about 1.5 cm
+# (the control box decides how far), while "go to height" stops where it is told. Measured on this box:
+# a target 1-2 mm away is ignored, 3 mm away moves the desk 2-3 mm, and the move starts 0.6-0.8 s after
+# the command. With 1 s per step, 9 of 9 nudges in a row went up and came back to the same 0.1 cm.
+# Shorter steps (0.8 s) let the next command arrive before the previous move ended.
+# The return target is the height read when the script starts, so the desk ends where it began.
 # Lives under the key desk_nudge in scripts.yaml. Replace biurko_xxxxxx with your desk's entity prefix.
 alias: Desk - nudge
 mode: single
@@ -15,17 +17,26 @@ fields:
       number:
         min: 1
         max: 3
+variables:
+  start: "{{ states('sensor.biurko_xxxxxx_desk_height') | float(0) | round(1) }}"
 sequence:
+# For about 5 s after the board boots the height shows the 58 cm placeholder: no real start height.
+- condition: template
+  value_template: "{{ start > 58.0 }}"
 - repeat:
     count: '{{ [[count | int(1), 1] | max, 3] | min }}'
     sequence:
-    - action: button.press
+    - action: number.set_value
       target:
-        entity_id: button.biurko_xxxxxx_desk_nudge_up
+        entity_id: number.biurko_xxxxxx_desk_height
+      data:
+        value: '{{ (start + 0.3) | round(1) }}'
     - delay:
-        milliseconds: 2500
-    - action: button.press
+        seconds: 1
+    - action: number.set_value
       target:
-        entity_id: button.biurko_xxxxxx_desk_nudge_down
+        entity_id: number.biurko_xxxxxx_desk_height
+      data:
+        value: '{{ start }}'
     - delay:
-        milliseconds: 2500
+        seconds: 1
