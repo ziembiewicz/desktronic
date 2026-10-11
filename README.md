@@ -7,7 +7,8 @@ handset.
 
 What you get in Home Assistant: current height, a height slider ("go to 110 cm" — not yet tested on this desk), memory presets M1–M4
 (buttons and their stored heights), nudge up/down, stop, desk status (idle / raising / lowering), idle time,
-plus Wi-Fi signal and the reason of the last reboot for diagnostics.
+plus Wi-Fi signal and the reason of the last reboot for diagnostics. Optionally, the desk raises itself for
+your meetings — see [Meeting reminder](#meeting-reminder-optional).
 
 ## Hardware
 
@@ -60,6 +61,29 @@ desk. `esphome/desktronic.yaml` contains only overrides on top of it:
 - Keep the control box screwed to the frame; its gyroscope-based collision detection misfires when it hangs loose.
 - The data lines are 5 V logic wired directly to the ESP32 here — outside spec; use a level shifter for a
   permanent build.
+
+## Meeting reminder (optional)
+
+Stand up for your meetings without thinking about it. 30 s before a meeting the desk gives a short nudge (a
+small move up and back down); at the start it nudges twice, pauses for 3 s and rises to memory preset **M2**
+(set M2 to your standing height first). The start time comes from the reminder that Outlook on the web shows
+as a Windows notification.
+
+- `windows/` — `meeting-reminder.ps1` reads the reminder on the PC and posts `warn` / `go` to a Home Assistant
+  webhook at the right moments. Requirements, install and limits: [`windows/README.md`](windows/README.md).
+- `homeassistant/` — what Home Assistant needs:
+  1. Helper `input_boolean.desk_meeting_auto` (`helpers/desk_meeting_auto.yaml`) — the master switch. Create it
+     in the UI and turn it on.
+  2. Script `desk_nudge` (`scripts/desk_nudge.yaml`) — add it to `scripts.yaml`.
+  3. Automation `desk_meeting_reminder` (`automations/desk_meeting_reminder.yaml`) — add it to
+     `automations.yaml` with a random webhook ID (for example `openssl rand -hex 16`).
+
+  In all three files replace `biurko_xxxxxx` with your desk's entity prefix.
+
+The desk only ever moves **up**: nothing happens when it is already at M2 or higher, while it is moving, when
+the switch is off, or right after the board boots (placeholder height). If the PC sleeps or the script stops,
+nothing is sent and the desk stays where it is. The desk moves on its own here, so keep the space above and
+around it clear and the control box screwed to the frame (collision detection).
 
 ## Licenses
 

@@ -1,0 +1,8 @@
+# input_boolean.desk_meeting_auto: master switch for the meeting reminder. Off = the desk never moves
+# on a reminder, whatever the PC sends.
+# Create it as a UI helper (Settings > Devices & services > Helpers), not in YAML: a UI helper keeps
+# its state across Home Assistant restarts, while a YAML one with `initial:` would reset it.
+# Turn it on once after creating it. This file is the reference definition.
+id: desk_meeting_auto
+name: Desk meeting reminder
+icon: mdi:desk
