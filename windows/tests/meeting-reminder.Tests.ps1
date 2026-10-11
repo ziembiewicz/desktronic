@@ -1,0 +1,103 @@
+# Tests for the pure functions of meeting-reminder.ps1. Pester 3.4 (built into Windows) or Pester 4:
+#   Import-Module Pester -MaximumVersion 4.99 -Force
+#   Invoke-Pester .\tests
+# Dot-sourcing the script only defines its functions; the main loop does not start.
+. (Join-Path (Split-Path -Parent $PSScriptRoot) 'meeting-reminder.ps1')
+
+function New-Time([int]$h, [int]$m, [int]$s = 0, [int]$day = 11) { New-Object DateTime 2026, 10, $day, $h, $m, $s }
+
+Describe 'Get-MeetingStart' {
+    It 'reads the start time from an Outlook reminder' {
+        Get-MeetingStart -Text '17:00 Microsoft Teams Meeting' -Created (New-Time 16 45) | Should Be (New-Time 17 0)
+    }
+    It 'accepts a time without a location' {
+        Get-MeetingStart -Text '17:00' -Created (New-Time 16 45) | Should Be (New-Time 17 0)
+    }
+    It 'accepts a one-digit hour' {
+        Get-MeetingStart -Text '9:05 Room 1' -Created (New-Time 8 50) | Should Be (New-Time 9 5)
+    }
+    It 'rolls over midnight' {
+        Get-MeetingStart -Text '00:05 Standup' -Created (New-Time 23 50) | Should Be (New-Time 0 5 0 12)
+    }
+    It 'accepts a lead of exactly 60 minutes' {
+        Get-MeetingStart -Text '17:00 x' -Created (New-Time 16 0) | Should Be (New-Time 17 0)
+    }
+    It 'ignores text without a leading time' {
+        Get-MeetingStart -Text 'This is where notifications will appear on your desktop.' -Created (New-Time 16 45) | Should BeNullOrEmpty
+        Get-MeetingStart -Text 'Success!' -Created (New-Time 16 45) | Should BeNullOrEmpty
+        Get-MeetingStart -Text '' -Created (New-Time 16 45) | Should BeNullOrEmpty
+    }
+    It 'ignores a 12-hour time' {
+        Get-MeetingStart -Text '5:00 PM Room' -Created (New-Time 16 45) | Should BeNullOrEmpty
+        Get-MeetingStart -Text '5:00pm Room' -Created (New-Time 16 45) | Should BeNullOrEmpty
+    }
+    It 'keeps a location that contains am or pm as a word' {
+        Get-MeetingStart -Text '17:00 Room AM-2' -Created (New-Time 16 45) | Should Be (New-Time 17 0)
+    }
+    It 'ignores an invalid time' {
+        Get-MeetingStart -Text '24:00 x' -Created (New-Time 23 50) | Should BeNullOrEmpty
+        Get-MeetingStart -Text '17:60 x' -Created (New-Time 16 45) | Should BeNullOrEmpty
+    }
+    It 'ignores a reminder created after the start (snoozed or at the time of the event)' {
+        Get-MeetingStart -Text '16:45 x' -Created (New-Time 16 50) | Should BeNullOrEmpty
+        Get-MeetingStart -Text '17:00 x' -Created (New-Time 17 0 1) | Should BeNullOrEmpty
+    }
+    It 'ignores a start more than 60 minutes ahead' {
+        Get-MeetingStart -Text '18:00 x' -Created (New-Time 16 45) | Should BeNullOrEmpty
+    }
+}
+
+Describe 'Add-Meeting' {
+    It 'queues a future meeting once' {
+        $s = [System.Collections.ArrayList]::new()
+        Add-Meeting -Schedule $s -Start (New-Time 17 0) -Now (New-Time 16 46) | Should Be 'queued'
+        Add-Meeting -Schedule $s -Start (New-Time 17 0) -Now (New-Time 16 47) | Should Be 'duplicate'
+        $s.Count | Should Be 1
+    }
+    It 'refuses a meeting too close to warn in time' {
+        $s = [System.Collections.ArrayList]::new()
+        Add-Meeting -Schedule $s -Start (New-Time 17 0) -Now (New-Time 16 59 30) | Should Be 'too-late'
+        $s.Count | Should Be 0
+    }
+    It 'refuses a stale reminder from yesterday' {
+        $s = [System.Collections.ArrayList]::new()
+        $start = Get-MeetingStart -Text '17:00 x' -Created (New-Time 16 45 0 10)
+        Add-Meeting -Schedule $s -Start $start -Now (New-Time 16 50) | Should Be 'too-late'
+    }
+}
+
+Describe 'Get-DueStep' {
+    It 'sends nothing before the warning time' {
+        $s = [System.Collections.ArrayList]::new()
+        [void](Add-Meeting -Schedule $s -Start (New-Time 17 0) -Now (New-Time 16 46))
+        @(Get-DueStep -Schedule $s -Now (New-Time 16 59 29)).Count | Should Be 0
+    }
+    It 'warns at T0 - 30 s and goes at T0, then forgets the meeting' {
+        $s = [System.Collections.ArrayList]::new()
+        [void](Add-Meeting -Schedule $s -Start (New-Time 17 0) -Now (New-Time 16 46))
+        $warn = @(Get-DueStep -Schedule $s -Now (New-Time 16 59 31))
+        $warn.Count | Should Be 1
+        $warn[0].Step | Should Be 'warn'
+        @(Get-DueStep -Schedule $s -Now (New-Time 16 59 45)).Count | Should Be 0
+        $go = @(Get-DueStep -Schedule $s -Now (New-Time 17 0 1))
+        $go.Count | Should Be 1
+        $go[0].Step | Should Be 'go'
+        $s.Count | Should Be 0
+    }
+    It 'skips a late warning and never sends go for that meeting' {
+        $s = [System.Collections.ArrayList]::new()
+        [void](Add-Meeting -Schedule $s -Start (New-Time 17 0) -Now (New-Time 16 46))
+        $late = @(Get-DueStep -Schedule $s -Now (New-Time 16 59 45))
+        $late[0].Step | Should Be 'skip-warn'
+        $s.Count | Should Be 0
+        @(Get-DueStep -Schedule $s -Now (New-Time 17 0 1)).Count | Should Be 0
+    }
+    It 'skips a late go' {
+        $s = [System.Collections.ArrayList]::new()
+        [void](Add-Meeting -Schedule $s -Start (New-Time 17 0) -Now (New-Time 16 46))
+        [void](Get-DueStep -Schedule $s -Now (New-Time 16 59 31))
+        $late = @(Get-DueStep -Schedule $s -Now (New-Time 17 0 20))
+        $late[0].Step | Should Be 'skip-go'
+        $s.Count | Should Be 0
+    }
+}
