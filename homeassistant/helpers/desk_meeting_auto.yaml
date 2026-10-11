@@ -2,7 +2,9 @@
 # on a reminder, whatever the PC sends.
 # Create it as a UI helper (Settings > Devices & services > Helpers), not in YAML: a UI helper keeps
 # its state across Home Assistant restarts, while a YAML one with `initial:` would reset it.
-# Turn it on once after creating it. This file is the reference definition.
+# Name it "Desk meeting auto": the UI builds the entity ID from the name, so this name gives
+# input_boolean.desk_meeting_auto, the ID the automation checks. Turn it on once after creating it.
+# This file is the reference definition.
 id: desk_meeting_auto
-name: Desk meeting reminder
+name: Desk meeting auto
 icon: mdi:desk

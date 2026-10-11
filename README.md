@@ -73,7 +73,7 @@ as a Windows notification.
   webhook at the right moments. Requirements, install and limits: [`windows/README.md`](windows/README.md).
 - `homeassistant/` — what Home Assistant needs:
   1. Helper `input_boolean.desk_meeting_auto` (`helpers/desk_meeting_auto.yaml`) — the master switch. Create it
-     in the UI and turn it on.
+     in the UI as a Toggle named **Desk meeting auto** (the UI builds the entity ID from the name) and turn it on.
   2. Script `desk_nudge` (`scripts/desk_nudge.yaml`) — add it to `scripts.yaml`.
   3. Automation `desk_meeting_reminder` (`automations/desk_meeting_reminder.yaml`) — add it to
      `automations.yaml` with a random webhook ID (for example `openssl rand -hex 16`).
