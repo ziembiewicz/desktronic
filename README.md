@@ -67,7 +67,8 @@ desk. `esphome/desktronic.yaml` contains only overrides on top of it:
 Stand up for your meetings without thinking about it. 30 s before a meeting the desk gives a short nudge (it
 goes 3 mm up and back down, which you feel rather than see); at the start it nudges twice, pauses for 3 s and rises to memory preset **M2**
 (set M2 to your standing height first). The start time comes from the reminder that Outlook on the web shows
-as a Windows notification.
+as a Windows notification. Calendar blockers stay put: a reminder whose title contains a blocker word
+(default `Blocker`, configurable) does not move the desk.
 
 - `windows/` — `meeting-reminder.ps1` reads the reminder on the PC and posts `warn` / `go` to a Home Assistant
   webhook at the right moments. Requirements, install and limits: [`windows/README.md`](windows/README.md).

@@ -101,3 +101,69 @@ Describe 'Get-DueStep' {
         $s.Count | Should Be 0
     }
 }
+
+Describe 'Test-Blocker' {
+    It 'matches a blocker word in the title' {
+        Test-Blocker -Title 'Blocker' -Words @('Blocker') | Should Be $true
+    }
+    It 'ignores letter case' {
+        Test-Blocker -Title 'BLOCKER deep work' -Words @('blocker') | Should Be $true
+    }
+    It 'matches a part of the title' {
+        Test-Blocker -Title 'Focus: Blocker for the report' -Words @('Blocker') | Should Be $true
+    }
+    It 'treats brackets in a word as plain text' {
+        Test-Blocker -Title '[Blocker] study' -Words @('[Blocker]') | Should Be $true
+        Test-Blocker -Title 'B study' -Words @('[Blocker]') | Should Be $false
+    }
+    It 'checks every word of the list' {
+        Test-Blocker -Title 'Focus time' -Words @('Blocker', 'Focus') | Should Be $true
+    }
+    It 'lets an ordinary meeting through' {
+        Test-Blocker -Title 'Weekly sync' -Words @('Blocker') | Should Be $false
+    }
+    It 'lets an empty title through' {
+        Test-Blocker -Title '' -Words @('Blocker') | Should Be $false
+        Test-Blocker -Title $null -Words @('Blocker') | Should Be $false
+    }
+    It 'blocks nothing without words' {
+        Test-Blocker -Title 'Blocker' -Words @() | Should Be $false
+        Test-Blocker -Title 'Blocker' -Words $null | Should Be $false
+    }
+    It 'never matches a blank word, so a stray space cannot silence every meeting' {
+        Test-Blocker -Title 'Weekly sync' -Words @($null, '', ' ') | Should Be $false
+    }
+    It 'trims a word before matching' {
+        Test-Blocker -Title '[Blocker] study' -Words @('Blocker ') | Should Be $true
+    }
+    It 'skips a word that is not a string' {
+        Test-Blocker -Title 'Room 1 sync' -Words @(1) | Should Be $false
+    }
+}
+
+Describe 'Get-BlockerWords' {
+    It 'defaults to Blocker when the key is missing' {
+        $config = '{"reminder_webhook_url":"http://x"}' | ConvertFrom-Json
+        (@(Get-BlockerWords $config.blocker_words) -join '|') | Should Be 'Blocker'
+    }
+    It 'defaults to Blocker when the key is null' {
+        $config = '{"blocker_words":null}' | ConvertFrom-Json
+        (@(Get-BlockerWords $config.blocker_words) -join '|') | Should Be 'Blocker'
+    }
+    It 'turns blockers off with an empty list' {
+        $config = '{"blocker_words":[]}' | ConvertFrom-Json
+        @(Get-BlockerWords $config.blocker_words).Count | Should Be 0
+    }
+    It 'keeps non-blank words, trimmed, in order' {
+        $config = '{"blocker_words":["Blocker"," ","Focus ",""]}' | ConvertFrom-Json
+        (@(Get-BlockerWords $config.blocker_words) -join '|') | Should Be 'Blocker|Focus'
+    }
+    It 'reads a single string as one word' {
+        $config = '{"blocker_words":"Blocker, Focus"}' | ConvertFrom-Json
+        (@(Get-BlockerWords $config.blocker_words) -join '|') | Should Be 'Blocker, Focus'
+    }
+    It 'drops values that are not strings' {
+        $config = '{"blocker_words":[1,["x"],{"a":"b"}]}' | ConvertFrom-Json
+        @(Get-BlockerWords $config.blocker_words).Count | Should Be 0
+    }
+}
