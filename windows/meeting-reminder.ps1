@@ -24,6 +24,10 @@
   The last rule drops reminders snoozed past the start, reminders "at the time of the event" and
   stale toasts from yesterday that are still in the notification center.
 
+  A reminder whose first line (the event title) contains a blocker word (config "blocker_words",
+  default "Blocker", any letter case, any part of the title) is logged as "excluded" and never
+  moves the desk. It does not silence another meeting that starts at the same time.
+
   Only one copy runs at a time: on start the script ends any older copy of itself.
 
 .NOTES
@@ -33,8 +37,11 @@
 
   Config file next to this script (not in the repository), config.json:
     { "reminder_webhook_url": "http://192.0.2.10:8123/api/webhook/MEETING_REMINDER_WEBHOOK_ID",
-      "apps": ["Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe!App"] }
-  Log: meeting-reminder.log next to this script (UTF-8, rotated at 512 KB). It never contains titles.
+      "apps": ["Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe!App"],
+      "blocker_words": ["Blocker"] }
+  "blocker_words" missing or null means ["Blocker"]; [] turns blockers off. ASCII words only.
+  Log: meeting-reminder.log next to this script (UTF-8, rotated at 512 KB). It never contains titles
+  or blocker words, only their count.
   Install: see windows/README.md.
 #>
 param(
@@ -73,6 +80,30 @@ function Get-MeetingStart {
     if ($start -le $Created) { $start = $start.AddDays(1) }
     if (($start - $Created).TotalMinutes -gt $MaxLeadMinutes) { return $null }
     return $start
+}
+
+function Get-BlockerWords {
+    # Blocker words from the config value: $null (key missing or null) means the default list,
+    # anything else keeps only its non-blank strings, trimmed. So [] turns blockers off.
+    param($Value)
+    if ($null -eq $Value) { return @('Blocker') }
+    $words = @()
+    foreach ($w in @($Value)) {
+        if ($w -is [string] -and -not [string]::IsNullOrWhiteSpace($w)) { $words += $w.Trim() }
+    }
+    return $words
+}
+
+function Test-Blocker {
+    # True when the title contains one of the words, ignoring letter case. Blank words never match,
+    # so a stray " " in the config cannot silence every meeting. Pure function.
+    param([string]$Title, [object[]]$Words)
+    if ([string]::IsNullOrEmpty($Title)) { return $false }
+    foreach ($w in @($Words)) {
+        if ($w -isnot [string] -or [string]::IsNullOrWhiteSpace($w)) { continue }
+        if ($Title.IndexOf($w.Trim(), [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+    }
+    return $false
 }
 
 function Add-Meeting {
@@ -143,11 +174,15 @@ function Send-Step {
 function Start-Main {
     $ErrorActionPreference = 'Stop'
     try {
-        $config = Get-Content -Raw -Path $ConfigPath | ConvertFrom-Json
+        $raw = Get-Content -Raw -Path $ConfigPath
+        # The ConvertFrom-Json error quotes the file, blocker words included: keep them out of the log.
+        try { $config = $raw | ConvertFrom-Json }
+        catch { throw "$ConfigPath is not valid JSON" }
         $url = $config.reminder_webhook_url
         if (-not $url) { throw "reminder_webhook_url missing in $ConfigPath" }
         $apps = @($config.apps | Where-Object { $_ })
         if ($apps.Count -eq 0) { $apps = $defaultApps }
+        $blockerWords = @(Get-BlockerWords $config.blocker_words)
     }
     catch {
         Write-Log "ERROR config: $($_.Exception.Message)"
@@ -177,7 +212,7 @@ function Start-Main {
     $listT = [System.Collections.Generic.IReadOnlyList[Windows.UI.Notifications.UserNotification]]
     $toastKind = [Windows.UI.Notifications.NotificationKinds]::Toast
     $generic = [Windows.UI.Notifications.KnownNotificationBindings]::ToastGeneric
-    Write-Log "start: access=$access apps=$($apps -join ',') poll=${PollSeconds}s warn=${WarnLeadSeconds}s maxlead=${MaxLeadMinutes}min"
+    Write-Log "start: access=$access apps=$($apps -join ',') poll=${PollSeconds}s warn=${WarnLeadSeconds}s maxlead=${MaxLeadMinutes}min blockers=$($blockerWords.Count)"
 
     $schedule = [System.Collections.ArrayList]::new()
     $seen = @{}
@@ -201,6 +236,15 @@ function Start-Main {
                     if ($texts.Count -lt 2) { continue }
                     $start = Get-MeetingStart -Text $texts[1] -Created $n.CreationTime.LocalDateTime -MaxLeadMinutes $MaxLeadMinutes
                     if ($null -eq $start) { continue }
+                    # Its own try: an error here must not stop the other notifications of this round.
+                    # On error the reminder counts as a meeting, as before blockers existed.
+                    $blocked = $false
+                    try { $blocked = Test-Blocker -Title $texts[0] -Words $blockerWords }
+                    catch { Write-Log 'ERROR blocker check' }
+                    if ($blocked) {
+                        Write-Log ('reminder T0={0:yyyy-MM-dd HH:mm} excluded' -f $start)
+                        continue
+                    }
                     $result = Add-Meeting -Schedule $schedule -Start $start -Now (Get-Date) -WarnLeadSeconds $WarnLeadSeconds
                     Write-Log ('reminder T0={0:yyyy-MM-dd HH:mm} {1}' -f $start, $result)
                 }
