@@ -157,6 +157,18 @@ window.addEventListener("blur", cancelPress);
 $("stop").addEventListener("pointerdown", () => flash($("stop")));
 $("stop").addEventListener("click", () => { cancelPress(); send({ type: "stop" }); });
 $("hide").addEventListener("click", () => send({ type: "hide" }));
+// Keys while the panel is open and active: arrows or F13/F14 = one tap (a keyboard dial can send these, one
+// key per notch; the taps add up like clicks), F15 = stop, Esc = hide. A held key does not repeat.
+const KEYS = { ArrowUp: "up", F13: "up", ArrowDown: "down", F14: "down" };
+window.addEventListener("keydown", e => {
+  if (KEYS[e.key]) {
+    e.preventDefault();
+    if (e.repeat) return;
+    flash($(KEYS[e.key]));
+    send({ type: "tap", dir: KEYS[e.key] });
+  } else if (e.key === "F15") { e.preventDefault(); cancelPress(); flash($("stop")); send({ type: "stop" }); }
+  else if (e.key === "Escape") { send({ type: "hide" }); }
+});
 paint();
 send({ type: "ready" });
 </script>

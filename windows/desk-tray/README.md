@@ -19,6 +19,7 @@ Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC
 | ▲ / ▼ hold (0.6 s or longer) | goes to the nearest memory preset above / below, as one command |
 | 1-4 | goes to that preset (presets with height 0 are hidden) |
 | red stop, tray menu **Cancel** | stop — see the warning below |
+| keys while the panel is active: ↑ / ↓ or F13 / F14 | one tap each (a keyboard dial mapped to these keys gives one tap per notch); F15 = stop, Esc = hide |
 
 - Home Assistant decides whether a move is safe and computes every target from its own readings. The PC never
   sends a height, so a forged push can at worst show a wrong number.
