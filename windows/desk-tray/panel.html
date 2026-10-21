@@ -17,13 +17,13 @@ html,body{margin:0;height:100%;overflow:hidden;background:#202227;color:#e8eaee;
 .hl{display:flex;align-items:center;gap:8px}
 /* Status lights under the height: exactly one is lit. green = ready, yellow = moving or a command waits,
    red = locked, no data from Home Assistant or Home Assistant does not answer. */
-.leds{display:flex;gap:7px;margin-top:7px;padding-left:3px}
-.leds i{width:7px;height:7px;border-radius:50%;background:#24272c}
-#lg.on{background:#5fd38a;box-shadow:0 0 5px #5fd38a,0 0 12px rgba(95,211,138,.6)}
-#ly.on{background:#f5c542;box-shadow:0 0 5px #f5c542,0 0 12px rgba(245,197,66,.6)}
-#lr.on{background:#ff4d4d;box-shadow:0 0 5px #ff4d4d,0 0 12px rgba(255,77,77,.6)}
-.ttl{font-size:13px;font-weight:500}
-#st{font-size:12px;color:#8a919c}
+.leds{display:flex;gap:10px;margin-top:8px;padding-left:4px}
+.leds i{width:10px;height:10px;border-radius:50%;background:#1b1d21;box-shadow:inset 0 0 0 1px #3a3e46}
+#lg.on{background:#7dffad;box-shadow:0 0 4px #7dffad,0 0 10px #2fe07a,0 0 22px rgba(47,224,122,.75)}
+#ly.on{background:#ffe066;box-shadow:0 0 4px #ffe066,0 0 10px #ffc21a,0 0 22px rgba(255,194,26,.75)}
+#lr.on{background:#ff6b6b;box-shadow:0 0 4px #ff6b6b,0 0 10px #ff2e2e,0 0 22px rgba(255,46,46,.75)}
+.ttl{font-size:14px;font-weight:600;color:#ffffff}
+#st{font-size:13px;color:#b9c0cb}
 .ib{width:28px;height:24px;border-radius:5px;display:flex;align-items:center;justify-content:center;color:#a8aeb8;font-size:14px}
 .ib:hover{background:rgba(255,255,255,.07)}
 #gear{opacity:.35}
@@ -31,30 +31,30 @@ html,body{margin:0;height:100%;overflow:hidden;background:#202227;color:#e8eaee;
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.04);padding:18px 14px 16px 22px;display:flex;align-items:center;gap:6px;overflow:hidden}
 .gl{position:absolute;inset:0;background:linear-gradient(115deg,rgba(255,255,255,.07) 0%,rgba(255,255,255,0) 32%);pointer-events:none}
 .hv{display:flex;align-items:baseline;gap:4px;min-width:118px}
-#h{font-family:"DSEG7",ui-monospace,monospace;font-size:38px;color:#9ad8ff;letter-spacing:1px;
-  text-shadow:0 0 6px rgba(120,200,255,.85),0 0 18px rgba(80,170,255,.45)}
+#h{font-family:"DSEG7",ui-monospace,monospace;font-size:38px;color:#c4ebff;letter-spacing:1px;
+  text-shadow:0 0 4px rgba(150,215,255,1),0 0 12px rgba(90,180,255,.85),0 0 28px rgba(60,150,255,.55)}
 #h.stale{color:#4f5a66;text-shadow:none}
-.cm{font-size:11px;color:#4f7d9c}
+.cm{font-size:12px;color:#7fb4d6}
 button{border:0;background:transparent;cursor:pointer;border-radius:8px;touch-action:none;font-family:inherit}
-.ar{width:48px;height:52px;color:#f2f2f2;font-size:18px}
+.ar{width:48px;height:52px;color:#ffffff;font-size:20px}
 .ar:hover{background:rgba(255,255,255,.06)}
-.ar.queued{color:#5fd38a;box-shadow:inset 0 0 0 1px rgba(95,211,138,.55)}
-.ar.press,.pb.press{background:rgba(95,211,138,.28);color:#5fd38a}
-.pb.queued{box-shadow:inset 0 0 0 1px rgba(95,211,138,.55)}
+.ar.queued{color:#7dffad;text-shadow:0 0 8px rgba(47,224,122,.9);box-shadow:inset 0 0 0 2px rgba(47,224,122,.8),0 0 14px rgba(47,224,122,.45)}
+.ar.press,.pb.press{background:rgba(47,224,122,.38);color:#c9ffdd;box-shadow:0 0 16px rgba(47,224,122,.55)}
+.pb.queued{box-shadow:inset 0 0 0 2px rgba(47,224,122,.8),0 0 14px rgba(47,224,122,.45)}
 .sep{width:1px;height:30px;background:rgba(255,255,255,.08);margin:0 4px}
 #pr{display:flex;gap:2px;flex:1}
 .pb{flex:1;height:52px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:0}
 .pb:hover{background:rgba(255,255,255,.06)}
-.pn{font-size:24px;line-height:1;color:#f2f2f2}
-.pb.on .pn{color:#5fd38a;text-shadow:0 0 6px rgba(95,211,138,.95),0 0 16px rgba(95,211,138,.6)}
-.pb.on .ph{color:#3f9a62}
-.pb.press .pn{color:#5fd38a}
-.ph{font-family:ui-monospace,Consolas,monospace;font-size:9px;color:#5b6370;letter-spacing:.04em}
+.pn{font-size:26px;line-height:1;color:#ffffff}
+.pb.on .pn{color:#7dffad;text-shadow:0 0 4px #7dffad,0 0 12px #2fe07a,0 0 26px rgba(47,224,122,.8)}
+.pb.on .ph{color:#7dffad;text-shadow:0 0 8px rgba(47,224,122,.7)}
+.pb.press .pn{color:#c9ffdd}
+.ph{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#a3abb8;letter-spacing:.04em}
 #stop{width:44px;height:52px;display:flex;align-items:center;justify-content:center}
 #stop:hover{background:rgba(255,90,90,.1)}
-#stop.press{background:rgba(255,77,77,.32)}
-.ring{position:relative;width:30px;height:30px;border-radius:50%;border:3px solid #ff4d4d;display:block;box-shadow:0 0 8px rgba(255,77,77,.5)}
-.bar{position:absolute;left:50%;top:50%;width:3px;height:30px;background:#ff4d4d;transform:translate(-50%,-50%) rotate(45deg)}
+#stop.press{background:rgba(255,46,46,.4);box-shadow:0 0 18px rgba(255,46,46,.6)}
+.ring{position:relative;width:30px;height:30px;border-radius:50%;border:3px solid #ff5c5c;display:block;box-shadow:0 0 6px rgba(255,60,60,.9),0 0 16px rgba(255,46,46,.5),inset 0 0 6px rgba(255,60,60,.5)}
+.bar{position:absolute;left:50%;top:50%;width:3px;height:30px;background:#ff5c5c;transform:translate(-50%,-50%) rotate(45deg);box-shadow:0 0 6px rgba(255,60,60,.8)}
 </style>
 </head>
 <body><div id="p">
