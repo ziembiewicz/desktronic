@@ -13,9 +13,9 @@
   -Remove undoes both.
 
 .NOTES
-  Windows PowerShell 5.1. Plain ASCII.
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Set-DeskTrayFirewall.ps1 -HomeAssistant 192.0.2.10
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Set-DeskTrayFirewall.ps1 -Remove
+  PowerShell 7.4 or newer (Windows PowerShell 5.1 works too).
+    pwsh.exe -NoProfile -ExecutionPolicy Bypass -File .\Set-DeskTrayFirewall.ps1 -HomeAssistant 192.0.2.10
+    pwsh.exe -NoProfile -ExecutionPolicy Bypass -File .\Set-DeskTrayFirewall.ps1 -Remove
 #>
 [CmdletBinding()]
 param(
@@ -35,7 +35,8 @@ if (-not $admin) {
     $me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"", '-Port', $Port, '-User', "`"$me`"")
     if ($Remove) { $argList += '-Remove' } else { $argList += @('-HomeAssistant', $HomeAssistant) }
-    $p = Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argList -Wait -PassThru
+    # The same PowerShell that runs this script, elevated.
+    $p = Start-Process -FilePath (Get-Process -Id $PID).Path -Verb RunAs -ArgumentList $argList -Wait -PassThru
     if ($p.ExitCode -ne 0) { throw "The elevated part failed (exit code $($p.ExitCode))." }
     'Done. Check: netsh http show urlacl url=' + $url
     return

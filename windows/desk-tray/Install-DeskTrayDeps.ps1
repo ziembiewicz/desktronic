@@ -6,7 +6,8 @@
   Both downloads are pinned to a version and a hash. Everything is unpacked into a temporary folder first;
   only after every check passes do the files move into place, so a failed check leaves nothing behind.
     WebView2 SDK  Microsoft.Web.WebView2 1.0.4258.31 from nuget.org: SHA-512 of the package, then the
-                  Authenticode signature of every DLL (Microsoft).            -> lib\webview2\
+                  Authenticode signature of every DLL (Microsoft). The .NET (Core) build for PowerShell 7
+                  (lib_manual/netcoreapp3.0) and the native loaders.          -> lib\webview2\
                   License: BSD-3-Clause (LICENSE.txt, NOTICE.txt travel with the DLLs).
     Font          DSEG v0.46 release zip from GitHub: SHA-256 of the zip; only DSEG7Modern-Bold.woff2 and the
                   license are kept.                                           -> lib\fonts\
@@ -14,9 +15,10 @@
   No admin rights needed. The WebView2 Runtime itself is part of Windows 11 and current Windows 10.
 
 .NOTES
-  Windows PowerShell 5.1. Plain ASCII. Run from the folder that holds desk-tray.ps1:
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-DeskTrayDeps.ps1
+  PowerShell 7.4 or newer. Run from the folder that holds desk-tray.ps1:
+    pwsh.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-DeskTrayDeps.ps1
 #>
+#Requires -Version 7.4
 [CmdletBinding()]
 param(
     [string]$Root = $PSScriptRoot,
@@ -27,8 +29,6 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem
-# Windows PowerShell 5.1 does not offer TLS 1.2 by default; nuget.org and GitHub require it.
-[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('desk-tray-deps-' + [guid]::NewGuid().ToString('N'))
 $null = New-Item -ItemType Directory -Path $tmp
@@ -62,8 +62,8 @@ try {
     Get-Pinned "https://api.nuget.org/v3-flatcontainer/microsoft.web.webview2/$SdkVersion/microsoft.web.webview2.$SdkVersion.nupkg" $nupkg 'SHA512' $SdkSha512
     $sdk = Join-Path $tmp 'webview2'
     Expand-Entries $nupkg @{
-        'lib/net462/Microsoft.Web.WebView2.Core.dll'     = 'Microsoft.Web.WebView2.Core.dll'
-        'lib/net462/Microsoft.Web.WebView2.WinForms.dll' = 'Microsoft.Web.WebView2.WinForms.dll'
+        'lib_manual/netcoreapp3.0/Microsoft.Web.WebView2.Core.dll'     = 'Microsoft.Web.WebView2.Core.dll'
+        'lib_manual/netcoreapp3.0/Microsoft.Web.WebView2.WinForms.dll' = 'Microsoft.Web.WebView2.WinForms.dll'
         'runtimes/win-x64/native/WebView2Loader.dll'     = 'runtimes\win-x64\native\WebView2Loader.dll'
         'runtimes/win-arm64/native/WebView2Loader.dll'   = 'runtimes\win-arm64\native\WebView2Loader.dll'
         'LICENSE.txt'                                    = 'LICENSE.txt'

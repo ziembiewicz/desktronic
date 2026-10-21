@@ -1,5 +1,6 @@
-# Tests for the pure functions of desk-tray.ps1. Pester 3.4 (built into Windows) or Pester 4:
-#   Import-Module Pester -MaximumVersion 4.99 -Force
+# Tests for the pure functions of desk-tray.ps1, in PowerShell 7 with Pester 4 (the syntax is Pester 4's):
+#   Install-Module Pester -RequiredVersion 4.10.1 -Scope CurrentUser   # once
+#   Import-Module Pester -RequiredVersion 4.10.1 -Force
 #   Invoke-Pester .\tests
 # Dot-sourcing the script only defines its functions; the tray does not start.
 . (Join-Path (Split-Path -Parent $PSScriptRoot) 'desk-tray.ps1')
