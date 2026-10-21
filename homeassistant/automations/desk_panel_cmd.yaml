@@ -1,0 +1,172 @@
+# Commands from the desk panel on the PC (windows/desk-tray): {"cmd": ...} on a webhook, LAN only.
+#   tap_up / tap_down   go 0.3 cm up / down (the box ignores targets closer than 3 mm; 3 mm moves 2-3 mm)
+#   hold_up / hold_down go to the nearest memory preset above / below, by its height as Home Assistant knows it
+#   preset (n = 1-4)    go to that preset's height
+#   hello               the PC is alive: Home Assistant pushes the height to it for the next 90 s
+# Moves use "go to height" with a target computed here from Home Assistant's own readings; nothing the PC
+# sends is a height. Stop has its own automation (desk_panel_stop), so it never waits behind a command.
+#
+# Why the guards. On 2026-10-21 about 16 moves in 80 s, with direction changes and commands sent while the
+# desk was moving, put this control box (Jiecang JCB36NE2A) into error E13. Only a reset cleared it, and the
+# reset drove the desk to the very bottom without any way to stop it. The box also ignores "stop" while it
+# runs a "go to height" or preset move: the handset is the only reliable stop. A move is refused when
+#   locked     the last command did not move the desk as expected (input_boolean.desk_panel_locked)
+#   not_ready  no numeric height, or the board booted less than 30 s ago (58 cm placeholder)
+#   busy       the desk is moving, its height changed less than 3 s ago, or the meeting reminder runs
+#   too_soon   less than 6 s since the last panel move
+#   budget     4 panel moves in the last 2 minutes
+#   motor      more than 60 s of estimated motor time in the last 10 minutes (the motors' 10 % duty cycle)
+#   reverse    the opposite direction less than 20 s after the last move
+#   limit      the target is outside min + 0.3 .. max - 0.3
+#   no_preset  no preset in that direction, or the preset is empty
+#   here       a preset the desk is already at
+# The thresholds are deliberately cautious; the cause of E13 on this box is not known.
+# A refusal fires the event desk_panel_refused; desk_panel_push shows it on the panel.
+#
+# With input_boolean.desk_panel_dry_run not exactly "off", moves are only written to the logbook. In dry run
+# the request may carry "test": {"h": <height>, "busy": true, "boot_age": <seconds>} to try every refusal
+# without moving the desk; outside dry run "test" is ignored.
+# Replace biurko_xxxxxx with your desk's entity prefix and DESK_PANEL_WEBHOOK_ID with a random ID.
+id: desk_panel_cmd
+alias: Desk - panel command
+description: Moves the desk for the PC panel, behind hard guards. Stop is desk_panel_stop.
+triggers:
+- trigger: webhook
+  webhook_id: DESK_PANEL_WEBHOOK_ID
+  allowed_methods:
+  - POST
+  local_only: true
+conditions:
+- condition: template
+  value_template: >-
+    {{ trigger.json is mapping and trigger.json.get('cmd') in
+       ['tap_up', 'tap_down', 'hold_up', 'hold_down', 'preset', 'hello'] }}
+actions:
+- if: "{{ trigger.json.cmd == 'hello' }}"
+  then:
+  - action: input_datetime.set_datetime
+    target:
+      entity_id: input_datetime.desk_panel_last_hello
+    data:
+      timestamp: "{{ now().timestamp() }}"
+  - event: desk_panel_hello
+  - stop: hello
+- variables:
+    cmd: "{{ trigger.json.cmd }}"
+    dry: "{{ states('input_boolean.desk_panel_dry_run') != 'off' }}"
+    test: "{{ trigger.json.get('test') if dry and trigger.json.get('test') is mapping else {} }}"
+    now_ts: "{{ now().timestamp() | int }}"
+    h_raw: "{{ test.get('h', states('sensor.biurko_xxxxxx_desk_height')) | string }}"
+    h: "{{ h_raw | float(0) | round(1) }}"
+    hmin: "{{ states('number.biurko_xxxxxx_min_height') | float(58) }}"
+    hmax: "{{ states('number.biurko_xxxxxx_max_height') | float(131) }}"
+    boot_age: >-
+      {%- set boot = as_datetime(states('sensor.biurko_xxxxxx_esp32_uptime'), none) -%}
+      {{ test.get('boot_age', (now() - boot).total_seconds() if boot is not none else 0) | float(0) }}
+    presets: >-
+      {%- set ns = namespace(l=[]) -%}
+      {%- for n in [1, 2, 3, 4] -%}
+        {%- set v = states('sensor.biurko_xxxxxx_desk_m' ~ n ~ '_height') | float(0) | round(1) -%}
+        {%- if v > 0 -%}{%- set ns.l = ns.l + [{'n': n, 'h': v}] -%}{%- endif -%}
+      {%- endfor -%}
+      {{ ns.l }}
+    target: >-
+      {%- if cmd == 'tap_up' -%}{{ (h + 0.3) | round(1) }}
+      {%- elif cmd == 'tap_down' -%}{{ (h - 0.3) | round(1) }}
+      {%- elif cmd == 'hold_up' -%}
+        {%- set c = presets | selectattr('h', 'gt', h + 1) | sort(attribute='h') | list -%}{{ c[0].h if c else 0 }}
+      {%- elif cmd == 'hold_down' -%}
+        {%- set c = presets | selectattr('h', 'lt', h - 1) | sort(attribute='h', reverse=true) | list -%}{{ c[0].h if c else 0 }}
+      {%- else -%}
+        {%- set c = presets | selectattr('n', 'eq', trigger.json.get('n') | int(0)) | list -%}{{ c[0].h if c else 0 }}
+      {%- endif -%}
+    dir: "{{ 'up' if target | float(0) > h else 'down' }}"
+    est: "{{ (((target | float(0)) - h) | abs / 5.3 + 1) | round(1) }}"
+    entries: >-
+      {%- set ns = namespace(l=[]) -%}
+      {%- for e in states('input_text.desk_panel_moves').split(';') if e.count(':') == 2 -%}
+        {%- set p = e.split(':') -%}
+        {%- if now_ts - (p[0] | int(0)) < 600 -%}
+          {%- set ns.l = ns.l + [{'t': p[0] | int(0), 's': p[1] | float(0), 'd': p[2]}] -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ ns.l }}
+    reason: >-
+      {%- set last = (entries | map(attribute='t') | max) if entries else 0 -%}
+      {%- set last_dir = (entries | selectattr('t', 'eq', last) | map(attribute='d') | first) if entries else '' -%}
+      {%- set hs = states.sensor.biurko_xxxxxx_desk_height -%}
+      {%- set quiet = hs is not none and (now() - hs.last_changed).total_seconds() >= 3 -%}
+      {%- set reminder = state_attr('automation.desk_meeting_reminder', 'current') | int(0) > 0
+                        or is_state('script.desk_nudge', 'on') -%}
+      {%- if states('input_boolean.desk_panel_locked') != 'off' -%}locked
+      {%- elif states('input_text.desk_panel_moves') in ['unknown', 'unavailable']
+              or not is_number(h_raw) or boot_age < 30 -%}not_ready
+      {%- elif test.get('busy', false) or reminder or not quiet
+              or not is_state('sensor.biurko_xxxxxx_desk_status', 'Idle') -%}busy
+      {%- elif target | float(0) <= 0 -%}no_preset
+      {%- elif cmd == 'preset' and (target | float(0) - h) | abs < 0.5 -%}here
+      {%- elif target | float(0) < hmin + 0.3 or target | float(0) > hmax - 0.3 -%}limit
+      {%- elif now_ts - last < 6 -%}too_soon
+      {%- elif entries | selectattr('t', 'gt', now_ts - 120) | list | count >= 4 -%}budget
+      {%- elif (entries | map(attribute='s') | sum) + est > 60 -%}motor
+      {%- elif last_dir != '' and last_dir != dir and now_ts - last < 20 -%}reverse
+      {%- endif -%}
+- if: "{{ reason | trim != '' }}"
+  then:
+  - event: desk_panel_refused
+    event_data:
+      reason: "{{ reason | trim }}"
+  - stop: refused
+# Book the move before it starts, so a second command queued behind this one sees it.
+- action: input_text.set_value
+  target:
+    entity_id: input_text.desk_panel_moves
+  data:
+    value: >-
+      {%- set ns = namespace(l=[]) -%}
+      {%- for e in entries -%}{%- set ns.l = ns.l + [e.t ~ ':' ~ e.s ~ ':' ~ e.d] -%}{%- endfor -%}
+      {{ (ns.l + [now_ts ~ ':' ~ est ~ ':' ~ dir])[-10:] | join(';') }}
+- if: "{{ dry }}"
+  then:
+  - action: logbook.log
+    data:
+      name: Desk panel
+      message: "DRY {{ cmd }} -> {{ target }} cm ({{ dir }}, about {{ est }} s)"
+      entity_id: input_boolean.desk_panel_dry_run
+  - stop: dry run
+- action: number.set_value
+  target:
+    entity_id: number.biurko_xxxxxx_desk_height
+  data:
+    value: "{{ target }}"
+# The move starts 1.0-1.2 s after the command. No start within 4 s, or a start the wrong way, is the
+# warning sign seen before E13: stop twice (the second catches the board's 100 ms wake-up window) and lock.
+- wait_template: "{{ (states('sensor.biurko_xxxxxx_desk_height') | float(0) - h) | abs >= 0.1 }}"
+  timeout:
+    seconds: 4
+  continue_on_timeout: true
+- if: >-
+    {{ not wait.completed
+       or ((states('sensor.biurko_xxxxxx_desk_height') | float(0) - h > 0) != (dir == 'up')) }}
+  then:
+  - action: button.press
+    target:
+      entity_id: button.biurko_xxxxxx_desk_stop
+  - delay:
+      milliseconds: 300
+  - action: button.press
+    target:
+      entity_id: button.biurko_xxxxxx_desk_stop
+  - action: input_boolean.turn_on
+    target:
+      entity_id: input_boolean.desk_panel_locked
+  - action: logbook.log
+    data:
+      name: Desk panel
+      message: >-
+        LOCKED: {{ cmd }} to {{ target }} cm from {{ h }} cm,
+        height now {{ states('sensor.biurko_xxxxxx_desk_height') }} cm
+      entity_id: input_boolean.desk_panel_locked
+mode: queued
+max: 2
+max_exceeded: silent

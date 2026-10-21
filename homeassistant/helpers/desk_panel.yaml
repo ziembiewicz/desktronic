@@ -1,0 +1,34 @@
+# Helpers for the desk panel on the PC (windows/desk-tray). Create them as UI helpers
+# (Settings > Devices & services > Helpers) with exactly these names: the UI builds the entity ID from the
+# name, and the automations check these IDs. UI helpers keep their state across restarts.
+# Create them BEFORE the three desk_panel automations, and turn "Desk panel dry run" ON first: the panel
+# then logs what it would do instead of moving the desk (see windows/desk-tray/README.md, "Dry run").
+
+# input_boolean.desk_panel_dry_run: on = commands only go to the logbook ("DRY ..."), the desk never moves.
+# The desk moves only when this helper is exactly "off"; unknown or missing counts as dry run.
+- id: desk_panel_dry_run
+  name: Desk panel dry run
+  icon: mdi:test-tube
+
+# input_boolean.desk_panel_locked: on = the panel refuses every move. The command automation turns it on
+# when a command did not move the desk, or moved it the wrong way, within 4 s: on this control box an
+# ignored command came right before the E13 lock-up. Only a person turns it off, after a look at the desk.
+- id: desk_panel_locked
+  name: Desk panel locked
+  icon: mdi:lock
+
+# input_text.desk_panel_moves: the panel's moves in the last 10 minutes, "epoch:motor_seconds:direction"
+# separated by ";". The command automation is its only writer. Max length 255 (set it in the UI).
+# Kept as text, not as counters with delays, so the rolling windows survive restarts and reloads.
+- id: desk_panel_moves
+  name: Desk panel moves
+  icon: mdi:history
+  max: 255
+
+# input_datetime.desk_panel_last_hello: when the PC last said hello (date and time). Home Assistant pushes
+# the height to the PC only within 90 s of the last hello, so a PC that is off is left alone.
+- id: desk_panel_last_hello
+  name: Desk panel last hello
+  icon: mdi:monitor
+  has_date: true
+  has_time: true
