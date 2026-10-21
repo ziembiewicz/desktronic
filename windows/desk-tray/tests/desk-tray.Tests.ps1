@@ -74,13 +74,14 @@ Describe 'ConvertTo-DeskNumber' {
 }
 
 Describe 'ConvertFrom-DeskPush' {
-    $json = '{"h":"85.0","status":"Idle","m":["85.0","115.5","120.900001525879","0.0"],"locked":"off","refused":""}'
+    $json = '{"h":"85.0","status":"Idle","m":["85.0","115.5","120.900001525879","0.0"],"locked":"off","seq":0,"result":""}'
     It 'reads a normal push' {
         $p = ConvertFrom-DeskPush $json
         $p.h | Should Be 85.0
         $p.status | Should Be 'Idle'
         $p.locked | Should Be $false
-        $p.refused | Should Be ''
+        $p.result | Should Be ''
+        $p.seq | Should Be 0
     }
     It 'keeps only presets with a height, numbered by slot' {
         $p = ConvertFrom-DeskPush $json
@@ -91,13 +92,17 @@ Describe 'ConvertFrom-DeskPush' {
         (ConvertFrom-DeskPush '{"h":"85.0","status":"Idle","m":[],"locked":"unknown"}').locked | Should Be $true
         (ConvertFrom-DeskPush '{"h":"85.0","status":"Idle","m":[]}').locked | Should Be $true
     }
-    It 'drops unknown status and refusal values' {
-        $p = ConvertFrom-DeskPush '{"h":"85.0","status":"<b>x</b>","m":[],"locked":"off","refused":"<script>"}'
+    It 'drops unknown status and result values' {
+        $p = ConvertFrom-DeskPush '{"h":"85.0","status":"<b>x</b>","m":[],"locked":"off","seq":"x","result":"<script>"}'
         $p.status | Should Be ''
-        $p.refused | Should Be ''
+        $p.result | Should Be ''
+        $p.seq | Should Be 0
     }
-    It 'passes a known refusal' {
-        (ConvertFrom-DeskPush '{"h":"85.0","status":"Idle","m":[],"locked":"off","refused":"too_soon"}').refused | Should Be 'too_soon'
+    It 'passes a result with its sequence number' {
+        $p = ConvertFrom-DeskPush '{"h":"85.0","status":"Idle","m":[],"locked":"off","seq":7,"result":"too_soon"}'
+        $p.result | Should Be 'too_soon'
+        $p.seq | Should Be 7
+        (ConvertFrom-DeskPush '{"h":"85.0","status":"Idle","m":[],"locked":"off","seq":8,"result":"ok"}').result | Should Be 'ok'
     }
     It 'gives no height for unavailable' {
         (ConvertFrom-DeskPush '{"h":"unavailable","status":"unavailable","m":["unknown"],"locked":"off"}').h | Should BeNullOrEmpty
@@ -112,28 +117,96 @@ Describe 'ConvertFrom-DeskPush' {
     }
 }
 
-Describe 'Get-DeskCommand' {
-    function M([string]$json) { $json | ConvertFrom-Json }
-    It 'maps taps and holds' {
-        (Get-DeskCommand (M '{"type":"tap","dir":"up"}')).body.cmd | Should Be 'tap_up'
-        (Get-DeskCommand (M '{"type":"tap","dir":"down"}')).body.cmd | Should Be 'tap_down'
-        (Get-DeskCommand (M '{"type":"hold","dir":"up"}')).body.cmd | Should Be 'hold_up'
-        (Get-DeskCommand (M '{"type":"hold","dir":"down"}')).body.cmd | Should Be 'hold_down'
+$t0 = [datetime]'2026-10-21T20:00:00Z'
+function M([string]$json) { $json | ConvertFrom-Json }
+function Taps($q, [string[]]$dirs, [datetime]$at) { foreach ($d in $dirs) { $q = Add-DeskPress $q (M "{`"type`":`"tap`",`"dir`":`"$d`"}") $at }; $q }
+
+Describe 'Add-DeskPress' {
+    It 'adds quick taps up into one step' {
+        $q = Taps $null @('up', 'up', 'up', 'up', 'up') $t0
+        $q.kind | Should Be 'step'
+        $q.n | Should Be 5
     }
-    It 'maps presets 1-4 only' {
-        $c = Get-DeskCommand (M '{"type":"preset","n":2}')
-        $c.body.cmd | Should Be 'preset'
-        $c.body.n | Should Be 2
-        Get-DeskCommand (M '{"type":"preset","n":5}') | Should BeNullOrEmpty
-        Get-DeskCommand (M '{"type":"preset","n":"x"}') | Should BeNullOrEmpty
+    It 'lets up and down cancel out' {
+        (Taps $null @('up', 'up', 'up', 'up', 'up', 'down', 'down') $t0).n | Should Be 3
     }
-    It 'maps stop to the stop webhook' {
-        (Get-DeskCommand (M '{"type":"stop"}')).stop | Should Be $true
-        (Get-DeskCommand (M '{"type":"tap","dir":"up"}')).stop | Should Be $false
+    It 'waits 0.7 s after the last tap before the step may go' {
+        $q = Taps $null @('up') $t0
+        $q = Taps $q @('up') $t0.AddMilliseconds(500)
+        $q.notBefore | Should Be $t0.AddMilliseconds(1200)
+        $q.since | Should Be $t0
     }
-    It 'never sends a height or anything unknown' {
-        Get-DeskCommand (M '{"type":"tap","dir":"sideways"}') | Should BeNullOrEmpty
-        Get-DeskCommand (M '{"type":"goto","h":58}') | Should BeNullOrEmpty
-        Get-DeskCommand (M '{"type":"hello"}') | Should BeNullOrEmpty
+    It 'replaces queued taps with a hold or a preset (the last decision wins)' {
+        $q = Taps $null @('up', 'up') $t0
+        $h = Add-DeskPress $q (M '{"type":"hold","dir":"down"}') $t0
+        $h.kind | Should Be 'hold'; $h.dir | Should Be 'down'
+        $p = Add-DeskPress $h (M '{"type":"preset","n":2}') $t0
+        $p.kind | Should Be 'preset'; $p.n | Should Be 2
+        (Taps $p @('up') $t0).kind | Should Be 'step'
+    }
+    It 'ignores anything else and never takes a height' {
+        $q = Taps $null @('up') $t0
+        (Add-DeskPress $q (M '{"type":"tap","dir":"sideways"}') $t0).n | Should Be 1
+        (Add-DeskPress $q (M '{"type":"preset","n":5}') $t0).kind | Should Be 'step'
+        (Add-DeskPress $q (M '{"type":"goto","h":58}') $t0).kind | Should Be 'step'
+        Add-DeskPress $null (M '{"type":"hello"}') $t0 | Should BeNullOrEmpty
+    }
+}
+
+Describe 'Get-DeskSend' {
+    It 'sends nothing before the quiet time is over' {
+        Get-DeskSend (Taps $null @('up') $t0) $t0.AddMilliseconds(600) | Should BeNullOrEmpty
+        Get-DeskSend $null $t0 | Should BeNullOrEmpty
+    }
+    It 'sends the summed step' {
+        $s = Get-DeskSend (Taps $null @('up', 'up', 'up') $t0) $t0.AddSeconds(1)
+        $s.body.cmd | Should Be 'step'
+        $s.body.n | Should Be 3
+        $s.rest | Should BeNullOrEmpty
+    }
+    It 'sends at most 20 taps and keeps the rest queued' {
+        $q = Taps $null (@('down') * 26) $t0
+        $s = Get-DeskSend $q $t0.AddSeconds(1)
+        $s.body.n | Should Be -20
+        $s.item.n | Should Be -20
+        $s.rest.n | Should Be -6
+    }
+    It 'drops taps that cancelled out, and items older than 3 minutes' {
+        (Get-DeskSend (Taps $null @('up', 'down') $t0) $t0.AddSeconds(1)).drop | Should Be $true
+        $old = Get-DeskSend (Taps $null @('up') $t0) $t0.AddSeconds(181)
+        $old.drop | Should Be $true
+        $old.why | Should Be 'too old'
+    }
+    It 'sends a hold and a preset at once' {
+        (Get-DeskSend (Add-DeskPress $null (M '{"type":"hold","dir":"up"}') $t0) $t0).body.cmd | Should Be 'hold_up'
+        $p = Get-DeskSend (Add-DeskPress $null (M '{"type":"preset","n":3}') $t0) $t0
+        $p.body.cmd | Should Be 'preset'
+        $p.body.n | Should Be 3
+    }
+}
+
+Describe 'Merge-DeskResult' {
+    $sent = @{ kind = 'step'; n = 3; since = $t0; notBefore = $t0 }
+    It 'keeps the queue as it is after ok' {
+        Merge-DeskResult $null $sent 'ok' $t0 | Should BeNullOrEmpty
+        (Merge-DeskResult (Taps $null @('up') $t0) $sent 'ok' $t0).n | Should Be 1
+    }
+    It 'requeues a step refused for now, added to newer taps, and waits' {
+        $q = Merge-DeskResult (Taps $null @('up', 'up') $t0) $sent 'too_soon' $t0
+        $q.n | Should Be 5
+        $q.since | Should Be $t0
+        $q.notBefore | Should Be $t0.AddSeconds(1)
+        (Merge-DeskResult $null $sent 'budget' $t0).notBefore | Should Be $t0.AddSeconds(3)
+    }
+    It 'lets a newer hold or preset win over a refused step' {
+        $q = Merge-DeskResult (Add-DeskPress $null (M '{"type":"preset","n":1}') $t0) $sent 'busy' $t0
+        $q.kind | Should Be 'preset'
+    }
+    It 'drops the item on a final refusal' {
+        foreach ($r in 'locked', 'limit', 'no_preset', 'here', '') { Merge-DeskResult $null $sent $r $t0 | Should BeNullOrEmpty }
+    }
+    It 'does not change the item it was given' {
+        $null = Merge-DeskResult (Taps $null @('up') $t0) $sent 'too_soon' $t0
+        $sent.n | Should Be 3
     }
 }

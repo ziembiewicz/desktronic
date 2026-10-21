@@ -1,5 +1,6 @@
 # Pushes the desk state to the panel on the PC (windows/desk-tray) through rest_command.desk_panel_push:
-# on every change of height, status, presets or the lock, every 30 s, on the PC's hello and on a refusal.
+# on every change of height, status, presets or the lock, every 30 s, on the PC's hello and with the result
+# of every panel command (desk_panel_result: seq + "ok" or the refusal).
 # Only while the PC said hello in the last 90 s: a PC that is off or asleep gets nothing, so the log does
 # not fill with timeouts. The push carries display data only; no command ever uses a height from the PC.
 # mode: queued with max 2 (the lowest Home Assistant accepts) lets a call in flight finish and queues the next,
@@ -23,7 +24,7 @@ triggers:
 - trigger: event
   event_type: desk_panel_hello
 - trigger: event
-  event_type: desk_panel_refused
+  event_type: desk_panel_result
 conditions:
 - condition: template
   value_template: >-
@@ -31,9 +32,12 @@ conditions:
 actions:
 - action: rest_command.desk_panel_push
   data:
-    refused: >-
-      {{ trigger.event.data.reason if trigger.platform == 'event'
-         and trigger.event.event_type == 'desk_panel_refused' else '' }}
+    seq: >-
+      {{ trigger.event.data.seq if trigger.platform == 'event'
+         and trigger.event.event_type == 'desk_panel_result' else 0 }}
+    result: >-
+      {{ trigger.event.data.result if trigger.platform == 'event'
+         and trigger.event.event_type == 'desk_panel_result' else '' }}
   response_variable: push
   continue_on_error: true
 mode: queued

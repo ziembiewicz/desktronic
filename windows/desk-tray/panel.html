@@ -10,22 +10,23 @@
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;overflow:hidden;background:#202227;color:#e8eaee;user-select:none;-webkit-user-select:none;
   font-family:"Segoe UI Variable","Segoe UI",system-ui,sans-serif}
-#p{height:100%;padding:12px 14px 10px;display:flex;flex-direction:column;gap:10px}
+#p{height:100%;padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px}
 #p.in{animation:slide .18s cubic-bezier(.1,.9,.2,1)}
 @keyframes slide{from{transform:translateY(14px);opacity:0}to{transform:none;opacity:1}}
 .hdr{display:flex;align-items:center;justify-content:space-between;padding:0 2px;height:24px}
 .hl{display:flex;align-items:center;gap:8px}
-.dot{width:7px;height:7px;border-radius:50%;background:#5b6370}
-.dot.ok{background:#5fd38a;box-shadow:0 0 6px #5fd38a}
-.dot.mv{background:#9ad8ff;box-shadow:0 0 6px #9ad8ff}
-.dot.bad{background:#ff4d4d;box-shadow:0 0 6px #ff4d4d}
+/* Status lights under the height: exactly one is lit. green = ready, yellow = moving or a command waits,
+   red = locked, no data from Home Assistant or Home Assistant does not answer. */
+.leds{display:flex;gap:7px;margin-top:7px;padding-left:3px}
+.leds i{width:7px;height:7px;border-radius:50%;background:#24272c}
+#lg.on{background:#5fd38a;box-shadow:0 0 5px #5fd38a,0 0 12px rgba(95,211,138,.6)}
+#ly.on{background:#f5c542;box-shadow:0 0 5px #f5c542,0 0 12px rgba(245,197,66,.6)}
+#lr.on{background:#ff4d4d;box-shadow:0 0 5px #ff4d4d,0 0 12px rgba(255,77,77,.6)}
 .ttl{font-size:13px;font-weight:500}
 #st{font-size:12px;color:#8a919c}
 .ib{width:28px;height:24px;border-radius:5px;display:flex;align-items:center;justify-content:center;color:#a8aeb8;font-size:14px}
 .ib:hover{background:rgba(255,255,255,.07)}
 #gear{opacity:.35}
-.bez{border-radius:12px;padding:5px;background:linear-gradient(180deg,#2a2c30,#141518);
-  box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 1px 0 rgba(0,0,0,.6)}
 .lcd{position:relative;border-radius:8px;background:linear-gradient(180deg,#0b0c0e 0%,#050506 100%);border:1px solid #000;
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.04);padding:18px 14px 16px 22px;display:flex;align-items:center;gap:6px;overflow:hidden}
 .gl{position:absolute;inset:0;background:linear-gradient(115deg,rgba(255,255,255,.07) 0%,rgba(255,255,255,0) 32%);pointer-events:none}
@@ -36,34 +37,38 @@ html,body{margin:0;height:100%;overflow:hidden;background:#202227;color:#e8eaee;
 .cm{font-size:11px;color:#4f7d9c}
 button{border:0;background:transparent;cursor:pointer;border-radius:8px;touch-action:none;font-family:inherit}
 .ar{width:48px;height:52px;color:#f2f2f2;font-size:18px}
-.ar:hover{background:rgba(255,255,255,.06)} .ar.on{background:rgba(154,216,255,.14);color:#9ad8ff}
+.ar:hover{background:rgba(255,255,255,.06)}
+.ar.queued{color:#5fd38a;box-shadow:inset 0 0 0 1px rgba(95,211,138,.55)}
+.ar.press,.pb.press{background:rgba(95,211,138,.28);color:#5fd38a}
+.pb.queued{box-shadow:inset 0 0 0 1px rgba(95,211,138,.55)}
 .sep{width:1px;height:30px;background:rgba(255,255,255,.08);margin:0 4px}
 #pr{display:flex;gap:2px;flex:1}
 .pb{flex:1;height:52px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:0}
 .pb:hover{background:rgba(255,255,255,.06)}
 .pn{font-size:24px;line-height:1;color:#f2f2f2}
-.pb.on .pn{color:#9ad8ff;text-shadow:0 0 8px rgba(120,200,255,.7)}
+.pb.on .pn{color:#5fd38a;text-shadow:0 0 6px rgba(95,211,138,.95),0 0 16px rgba(95,211,138,.6)}
+.pb.on .ph{color:#3f9a62}
+.pb.press .pn{color:#5fd38a}
 .ph{font-family:ui-monospace,Consolas,monospace;font-size:9px;color:#5b6370;letter-spacing:.04em}
 #stop{width:44px;height:52px;display:flex;align-items:center;justify-content:center}
 #stop:hover{background:rgba(255,90,90,.1)}
+#stop.press{background:rgba(255,77,77,.32)}
 .ring{position:relative;width:30px;height:30px;border-radius:50%;border:3px solid #ff4d4d;display:block;box-shadow:0 0 8px rgba(255,77,77,.5)}
 .bar{position:absolute;left:50%;top:50%;width:3px;height:30px;background:#ff4d4d;transform:translate(-50%,-50%) rotate(45deg)}
-#msg{height:16px;font-size:12px;color:#c9ced6;padding:0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#msg.warn{color:#ffb15c} #msg.bad{color:#ff7a7a}
 </style>
 </head>
 <body><div id="p">
-<div class="hdr"><div class="hl"><div class="dot" id="dot"></div><div class="ttl">Biurko</div><div id="st">łączenie&hellip;</div></div>
+<div class="hdr"><div class="hl"><div class="ttl">Biurko</div><div id="st">łączenie&hellip;</div></div>
  <div class="hl" style="gap:4px"><div class="ib" id="gear" title="Ustawienia (jeszcze nie ma)">&#9881;</div><div class="ib" id="hide" title="Ukryj">&#8212;</div></div></div>
-<div class="bez"><div class="lcd"><div class="gl"></div>
- <div class="hv"><div id="h" class="stale">--.-</div><div class="cm">cm</div></div>
+<div class="lcd"><div class="gl"></div>
+ <div><div class="hv"><div id="h" class="stale">--.-</div><div class="cm">cm</div></div>
+  <div class="leds"><i id="lg" title="OK"></i><i id="ly" title="W ruchu albo polecenie czeka"></i><i id="lr" title="Blokada albo brak połączenia z HA"></i></div></div>
  <div style="display:flex;gap:2px;margin-left:6px">
   <button class="ar" id="up" data-dir="up" title="Stuknij: 3 mm w górę. Przytrzymaj: najbliższy preset wyżej">&#9650;</button>
   <button class="ar" id="down" data-dir="down" title="Stuknij: 3 mm w dół. Przytrzymaj: najbliższy preset niżej">&#9660;</button></div>
  <div class="sep"></div><div id="pr"></div>
  <button id="stop" title="Stop. Pewny stop w trakcie jazdy: pilot"><span class="ring"><span class="bar"></span></span></button>
-</div></div>
-<div id="msg"></div>
+</div>
 </div>
 <script>
 "use strict";
@@ -71,24 +76,14 @@ const wv = window.chrome && window.chrome.webview;
 const send = o => { if (wv) wv.postMessage(o); };
 const $ = id => document.getElementById(id);
 const HOLD_MS = 600;
-const REFUSED = {
-  locked: "Zablokowane: biurko nie ruszyło jak trzeba. Sprawdź je i odblokuj w Home Assistant.",
-  not_ready: "Biurko jeszcze niegotowe. Spróbuj za chwilę.",
-  busy: "Biurko jest zajęte. Spróbuj, gdy stanie.",
-  too_soon: "Za szybko. Odczekaj kilka sekund.",
-  budget: "Limit ruchów. Odczekaj do 2 minut.",
-  motor: "Silnik odpoczywa (limit pracy). Odczekaj kilka minut.",
-  reverse: "Zmiana kierunku. Odczekaj 20 s.",
-  limit: "Skrajna wysokość.",
-  no_preset: "Brak presetu w tę stronę.",
-  here: "Biurko już tu jest."
-};
-let state = { h: null, status: "", presets: [], locked: false, stale: true };
-let msgTimer = null;
+// No messages: what waits is shown by lit buttons, a lock only by the red dot.
+let state = { h: null, status: "", presets: [], locked: false, stale: true, offline: false };
+let queue = { up: false, down: false, preset: 0 };
 
-function showMsg(text, cls, ms) {
-  const m = $("msg"); m.textContent = text; m.className = cls || "";
-  clearTimeout(msgTimer); if (ms) msgTimer = setTimeout(paint, ms);
+// A press lights the button for at least 180 ms, so even a quick tap is seen.
+function flash(el) {
+  el.classList.add("press");
+  clearTimeout(el._t); el._t = setTimeout(() => { if (!el._held) el.classList.remove("press"); }, 180);
 }
 
 function paint() {
@@ -96,60 +91,62 @@ function paint() {
   const hEl = $("h");
   if (state.stale || state.h === null) { hEl.textContent = "--.-"; hEl.classList.add("stale"); }
   else { hEl.textContent = state.h.toFixed(1); hEl.classList.remove("stale"); }
-  $("dot").className = "dot " + (state.stale ? "" : state.locked ? "bad" : moving ? "mv" : "ok");
-  $("st").textContent = state.stale ? "brak danych z HA" : state.locked ? "zablokowane" : moving ? "w ruchu…" : "połączono";
+  const light = (state.stale || state.offline || state.locked) ? "lr"
+              : (moving || queue.up || queue.down || queue.preset) ? "ly" : "lg";
+  for (const id of ["lg", "ly", "lr"]) $(id).classList.toggle("on", id === light);
+  $("st").textContent = state.stale ? "brak danych z HA" : moving ? "w ruchu…" : "połączono";
   const pr = $("pr"); pr.innerHTML = "";
   for (const p of state.presets) {
     const b = document.createElement("button"); b.className = "pb"; b.dataset.n = p.n;
-    if (state.h !== null && !state.stale && Math.abs(state.h - p.h) < 0.3) b.classList.add("on");
+    if (!state.stale && !moving && state.h !== null && Math.abs(state.h - p.h) < 0.3) b.classList.add("on");
+    if (queue.preset === p.n) b.classList.add("queued");
     b.innerHTML = '<span class="pn">' + p.n + '</span><span class="ph">' + p.h.toFixed(1) + '</span>';
+    b.addEventListener("pointerdown", () => flash(b));
     b.addEventListener("click", () => send({ type: "preset", n: p.n }));
     pr.appendChild(b);
   }
-  clearTimeout(msgTimer);
-  if (state.locked) showMsg(REFUSED.locked, "bad");
-  else if (moving) showMsg("W ruchu. Zatrzymasz pilotem.", "warn");
-  else if (state.stale) showMsg("Czekam na dane z Home Assistant.", "");
-  else showMsg("", "");
+  $("up").classList.toggle("queued", queue.up);
+  $("down").classList.toggle("queued", queue.down);
 }
 
 if (wv) wv.addEventListener("message", e => {
   const m = e.data;
   if (m.type === "state") {
-    state = { h: m.h, status: m.status || "", presets: m.presets || [], locked: !!m.locked, stale: !!m.stale };
+    state = { h: m.h, status: m.status || "", presets: m.presets || [], locked: !!m.locked, stale: !!m.stale, offline: !!m.offline };
     paint();
-    if (m.refused && REFUSED[m.refused] && !state.locked) showMsg(REFUSED[m.refused], "warn", 4000);
+  } else if (m.type === "queue") {
+    queue = { up: !!m.up, down: !!m.down, preset: m.preset || 0 };
+    paint();
   } else if (m.type === "shown") {
     const p = $("p"); p.classList.remove("in"); void p.offsetWidth; p.classList.add("in");
   } else if (m.type === "hidden") {
     cancelPress();
-  } else if (m.type === "error") {
-    showMsg(m.code === "offline" ? "Brak połączenia z Home Assistant." : "Błąd.", "bad", 4000);
   }
 });
 
-// Tap = released before HOLD_MS: 3 mm. Hold = still pressed at HOLD_MS: one command to the nearest preset.
-// Either way exactly one command per press; nothing repeats while the button is held.
+// Tap = released before HOLD_MS: one step of 3 mm (quick taps add up in desk-tray.ps1).
+// Hold = still pressed at HOLD_MS: one command to the nearest preset. Nothing repeats while held.
 let press = null;
 function startPress(btn) {
   cancelPress();
-  btn.classList.add("on");
-  press = { btn: btn, timer: setTimeout(() => {
+  btn._held = true; btn.classList.add("press");
+  press = { btn: btn, done: false, timer: setTimeout(() => {
     if (!press) return;
     send({ type: "hold", dir: press.btn.dataset.dir });
     press.done = true;
-  }, HOLD_MS), done: false };
+  }, HOLD_MS) };
 }
 function endPress() {
   if (!press) return;
   clearTimeout(press.timer);
   if (!press.done) send({ type: "tap", dir: press.btn.dataset.dir });
-  press.btn.classList.remove("on"); press = null;
+  release(press.btn); press = null;
 }
 function cancelPress() {
   if (!press) return;
-  clearTimeout(press.timer); press.btn.classList.remove("on"); press = null;
+  clearTimeout(press.timer); release(press.btn); press = null;
 }
+function release(btn) { btn._held = false; flash(btn); }
 for (const id of ["up", "down"]) {
   const b = $(id);
   b.addEventListener("pointerdown", e => { b.setPointerCapture(e.pointerId); startPress(b); });
@@ -157,6 +154,7 @@ for (const id of ["up", "down"]) {
   b.addEventListener("pointercancel", cancelPress);
 }
 window.addEventListener("blur", cancelPress);
+$("stop").addEventListener("pointerdown", () => flash($("stop")));
 $("stop").addEventListener("click", () => { cancelPress(); send({ type: "stop" }); });
 $("hide").addEventListener("click", () => send({ type: "hide" }));
 paint();

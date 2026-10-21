@@ -1,5 +1,7 @@
-# Commands from the desk panel on the PC (windows/desk-tray): {"cmd": ...} on a webhook, LAN only.
-#   tap_up / tap_down   go 0.3 cm up / down (the box ignores targets closer than 3 mm; 3 mm moves 2-3 mm)
+# Commands from the desk panel on the PC (windows/desk-tray): {"cmd": ..., "seq": <number>} on a webhook, LAN only.
+#   step (n = -20..20)  go n x 0.3 cm up (n > 0) or down; the panel adds quick taps into one step, so the box
+#                       gets one command instead of many (it ignores targets closer than 3 mm). Near the
+#                       minimum or maximum the target stops 3 mm short of it.
 #   hold_up / hold_down go to the nearest memory preset above / below, by its height as Home Assistant knows it
 #   preset (n = 1-4)    go to that preset's height
 #   hello               the PC is alive: Home Assistant pushes the height to it for the next 90 s
@@ -21,7 +23,8 @@
 #   no_preset  no preset in that direction, or the preset is empty
 #   here       a preset the desk is already at
 # The thresholds are deliberately cautious; the cause of E13 on this box is not known.
-# A refusal fires the event desk_panel_refused; desk_panel_push shows it on the panel.
+# Every command except hello ends with the event desk_panel_result {seq, result}: "ok" or the refusal.
+# desk_panel_push sends it to the panel, which keeps refused steps queued and retries them quietly.
 #
 # With input_boolean.desk_panel_dry_run not exactly "off", moves are only written to the logbook. In dry run
 # the request may carry "test": {"h": <height>, "busy": true, "boot_age": <seconds>} to try every refusal
@@ -40,7 +43,7 @@ conditions:
 - condition: template
   value_template: >-
     {{ trigger.json is mapping and trigger.json.get('cmd') in
-       ['tap_up', 'tap_down', 'hold_up', 'hold_down', 'preset', 'hello'] }}
+       ['step', 'hold_up', 'hold_down', 'preset', 'hello'] }}
 actions:
 - if: "{{ trigger.json.cmd == 'hello' }}"
   then:
@@ -53,6 +56,8 @@ actions:
   - stop: hello
 - variables:
     cmd: "{{ trigger.json.cmd }}"
+    seq: "{{ trigger.json.get('seq', 0) | int(0) }}"
+    steps: "{{ [[trigger.json.get('n', 0) | int(0), -20] | max, 20] | min if trigger.json.cmd == 'step' else 0 }}"
     dry: "{{ states('input_boolean.desk_panel_dry_run') != 'off' }}"
     test: "{{ trigger.json.get('test') if dry and trigger.json.get('test') is mapping else {} }}"
     now_ts: "{{ now().timestamp() | int }}"
@@ -71,8 +76,7 @@ actions:
       {%- endfor -%}
       {{ ns.l }}
     target: >-
-      {%- if cmd == 'tap_up' -%}{{ (h + 0.3) | round(1) }}
-      {%- elif cmd == 'tap_down' -%}{{ (h - 0.3) | round(1) }}
+      {%- if cmd == 'step' -%}{{ ([[h + 0.3 * steps, hmin + 0.3] | max, hmax - 0.3] | min) | round(1) }}
       {%- elif cmd == 'hold_up' -%}
         {%- set c = presets | selectattr('h', 'gt', h + 1) | sort(attribute='h') | list -%}{{ c[0].h if c else 0 }}
       {%- elif cmd == 'hold_down' -%}
@@ -80,7 +84,8 @@ actions:
       {%- else -%}
         {%- set c = presets | selectattr('n', 'eq', trigger.json.get('n') | int(0)) | list -%}{{ c[0].h if c else 0 }}
       {%- endif -%}
-    dir: "{{ 'up' if target | float(0) > h else 'down' }}"
+    dir: >-
+      {{ ('up' if steps > 0 else 'down') if cmd == 'step' else ('up' if target | float(0) > h else 'down') }}
     est: "{{ (((target | float(0)) - h) | abs / 5.3 + 1) | round(1) }}"
     entries: >-
       {%- set ns = namespace(l=[]) -%}
@@ -105,7 +110,8 @@ actions:
               or not is_state('sensor.biurko_xxxxxx_desk_status', 'Idle') -%}busy
       {%- elif target | float(0) <= 0 -%}no_preset
       {%- elif cmd == 'preset' and (target | float(0) - h) | abs < 0.5 -%}here
-      {%- elif target | float(0) < hmin + 0.3 or target | float(0) > hmax - 0.3 -%}limit
+      {%- elif cmd == 'step' and (steps == 0 or (target | float(0) - h) * (1 if steps > 0 else -1) < 0.25) -%}limit
+      {%- elif cmd != 'step' and (target | float(0) < hmin + 0.3 or target | float(0) > hmax - 0.3) -%}limit
       {%- elif now_ts - last < 6 -%}too_soon
       {%- elif entries | selectattr('t', 'gt', now_ts - 120) | list | count >= 4 -%}budget
       {%- elif (entries | map(attribute='s') | sum) + est > 60 -%}motor
@@ -113,9 +119,10 @@ actions:
       {%- endif -%}
 - if: "{{ reason | trim != '' }}"
   then:
-  - event: desk_panel_refused
+  - event: desk_panel_result
     event_data:
-      reason: "{{ reason | trim }}"
+      seq: "{{ seq }}"
+      result: "{{ reason | trim }}"
   - stop: refused
 # Book the move before it starts, so a second command queued behind this one sees it.
 - action: input_text.set_value
@@ -126,6 +133,10 @@ actions:
       {%- set ns = namespace(l=[]) -%}
       {%- for e in entries -%}{%- set ns.l = ns.l + [e.t ~ ':' ~ e.s ~ ':' ~ e.d] -%}{%- endfor -%}
       {{ (ns.l + [now_ts ~ ':' ~ est ~ ':' ~ dir])[-10:] | join(';') }}
+- event: desk_panel_result
+  event_data:
+    seq: "{{ seq }}"
+    result: ok
 - if: "{{ dry }}"
   then:
   - action: logbook.log

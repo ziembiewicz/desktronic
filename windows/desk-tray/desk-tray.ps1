@@ -5,13 +5,16 @@
 .DESCRIPTION
   A tray icon opens a small dark panel (panel.html in WebView2) above the taskbar. Home Assistant pushes the
   desk state to this script (HTTP POST to http://+:8765/desk/ with a shared token); the panel shows it.
-  Buttons go back to Home Assistant as webhooks on the LAN:
-    tap  up/down   {"cmd":"tap_up"}   - 3 mm (the control box ignores less)
-    hold up/down   {"cmd":"hold_up"}  - to the nearest memory preset in that direction (one command)
+  Buttons go back to Home Assistant as webhooks on the LAN, each with a sequence number ("seq"):
+    tap  up/down   {"cmd":"step","n":3}  - quick taps add up (up +1, down -1) into one move of n x 3 mm
+    hold up/down   {"cmd":"hold_up"}     - to the nearest memory preset in that direction (one command)
     preset 1-4     {"cmd":"preset","n":2}
-    stop           POST to the separate stop webhook
-  Home Assistant decides whether a move is safe (homeassistant/automations/desk_panel_cmd.yaml) and computes
-  every target from its own readings: this script never sends a height. A refused move shows a short note.
+    stop           POST to the separate stop webhook; it also empties the queue
+  Home Assistant decides whether a move is safe (homeassistant/automations/desk_panel_cmd.yaml), computes every
+  target from its own readings (this script never sends a height) and pushes back the result for each seq.
+  Presses wait in a queue of one item here: a refusal that passes with time (too soon, busy, move budget) keeps
+  the item queued and it is sent again, quietly, as soon as it can go; the panel shows no messages. A hold or a
+  preset replaces queued taps, and an item older than 3 minutes is dropped.
   The control box ignores stop during a move it runs itself: the handset is the only reliable stop.
 
   No Home Assistant token on the PC, no third-party agent, no MQTT.
@@ -30,7 +33,7 @@
       "panel_stop_webhook_url": "http://192.0.2.10:8123/api/webhook/DESK_PANEL_STOP_WEBHOOK_ID",
       "push_token":             "<the value of desk_panel_push_token in Home Assistant secrets.yaml>" }
   The log never contains the webhook URLs, the token or pushed data; only start/stop, panel open times,
-  refusals and errors.
+  dropped commands and errors.
 #>
 #Requires -Version 7.4
 #Requires -PSEdition Core
@@ -44,6 +47,12 @@ param(
 $logPath = Join-Path $PSScriptRoot 'desk-tray.log'
 $logMaxBytes = 512KB
 $knownRefusals = @('locked', 'not_ready', 'busy', 'too_soon', 'budget', 'motor', 'reverse', 'limit', 'no_preset', 'here')
+# Refusals that pass with time, and how many seconds to wait before the next try. Any other result drops the
+# item (locked shows as the red dot; limit, no_preset and here cannot change by waiting).
+$retryAfter = @{ too_soon = 1; busy = 1; not_ready = 3; budget = 3; motor = 3; reverse = 3 }
+$settleMs = 700              # quiet time after the last tap before the summed step goes out
+$queueMaxAgeSeconds = 180    # an item that could not go out for this long is dropped, not done late
+$maxStep = 20                # taps per command (6 cm); more stay queued for the next one
 $inv = [Globalization.CultureInfo]::InvariantCulture
 
 function Write-Log {
@@ -99,7 +108,7 @@ function ConvertTo-DeskNumber {
 }
 
 function ConvertFrom-DeskPush {
-    # Validates a push from Home Assistant: {"h","status","m":[4],"locked","refused"}. Unknown values are
+    # Validates a push from Home Assistant: {"h","status","m":[4],"locked","seq","result"}. Unknown values are
     # dropped, never passed to the page as they came.
     param([string]$Json)
     try { $p = $Json | ConvertFrom-Json } catch { return $null }
@@ -112,27 +121,80 @@ function ConvertFrom-DeskPush {
         $h = ConvertTo-DeskNumber $m[$i]
         if ($null -ne $h -and $h -gt 0) { $presets += [pscustomobject]@{ n = $i + 1; h = $h } }
     }
-    $refused = [string]$p.refused
-    if ($refused -notin $knownRefusals) { $refused = '' }
+    $result = [string]$p.result
+    if ($result -ne 'ok' -and $result -notin $knownRefusals) { $result = '' }
+    $seq = 0
+    $null = [int]::TryParse([string]$p.seq, [ref]$seq)
     [pscustomobject]@{
         h       = ConvertTo-DeskNumber $p.h
         status  = $status
         presets = $presets
         locked  = ([string]$p.locked -ne 'off')
-        refused = $refused
+        seq     = $seq
+        result  = $result
     }
 }
 
-function Get-DeskCommand {
-    # Maps a message from the page to the webhook call. Returns $null for anything else.
-    param($Message)
+function Add-DeskPress {
+    # Adds a button press to the queue (at most one queued item). Taps add up: up +1, down -1, so five quick
+    # taps become one move of 1.5 cm, sent after $settleMs of quiet. A hold or a preset replaces whatever is
+    # queued: the last decision wins. Anything else leaves the queue as it was.
+    param($Queue, $Message, [datetime]$Now)
     switch ([string]$Message.type) {
-        'tap'    { if ($Message.dir -in 'up', 'down') { return @{ stop = $false; body = @{ cmd = "tap_$($Message.dir)" } } } }
-        'hold'   { if ($Message.dir -in 'up', 'down') { return @{ stop = $false; body = @{ cmd = "hold_$($Message.dir)" } } } }
-        'preset' { $n = 0; if ([int]::TryParse([string]$Message.n, [ref]$n) -and $n -ge 1 -and $n -le 4) { return @{ stop = $false; body = @{ cmd = 'preset'; n = $n } } } }
-        'stop'   { return @{ stop = $true; body = @{} } }
+        'tap' {
+            if ($Message.dir -notin 'up', 'down') { return $Queue }
+            $d = if ($Message.dir -eq 'up') { 1 } else { -1 }
+            $notBefore = $Now.AddMilliseconds($settleMs)
+            if ($Queue -and $Queue.kind -eq 'step') {
+                if ($Queue.notBefore -gt $notBefore) { $notBefore = $Queue.notBefore }
+                return @{ kind = 'step'; n = $Queue.n + $d; since = $Queue.since; notBefore = $notBefore }
+            }
+            return @{ kind = 'step'; n = $d; since = $Now; notBefore = $notBefore }
+        }
+        'hold' {
+            if ($Message.dir -in 'up', 'down') { return @{ kind = 'hold'; dir = [string]$Message.dir; since = $Now; notBefore = $Now } }
+        }
+        'preset' {
+            $n = 0
+            if ([int]::TryParse([string]$Message.n, [ref]$n) -and $n -ge 1 -and $n -le 4) { return @{ kind = 'preset'; n = $n; since = $Now; notBefore = $Now } }
+        }
+    }
+    $Queue
+}
+
+function Get-DeskSend {
+    # What goes out now for the queued item: $null (nothing yet), @{ drop = $true } (too old, or taps that
+    # cancelled out) or @{ body; item = what was sent; rest = what stays queued }.
+    param($Queue, [datetime]$Now)
+    if ($null -eq $Queue -or $Now -lt $Queue.notBefore) { return $null }
+    if (($Now - $Queue.since).TotalSeconds -gt $queueMaxAgeSeconds) { return @{ drop = $true; why = 'too old' } }
+    switch ($Queue.kind) {
+        'step' {
+            if ($Queue.n -eq 0) { return @{ drop = $true; why = '' } }
+            $n = [math]::Max(-$maxStep, [math]::Min($maxStep, $Queue.n))
+            $item = $Queue.Clone(); $item.n = $n
+            $rest = $null
+            if ($Queue.n -ne $n) { $rest = $Queue.Clone(); $rest.n = $Queue.n - $n }
+            return @{ body = @{ cmd = 'step'; n = $n }; item = $item; rest = $rest }
+        }
+        'hold' { return @{ body = @{ cmd = "hold_$($Queue.dir)" }; item = $Queue; rest = $null } }
+        'preset' { return @{ body = @{ cmd = 'preset'; n = $Queue.n }; item = $Queue; rest = $null } }
     }
     $null
+}
+
+function Merge-DeskResult {
+    # The queue after Home Assistant answered for $Sent. "ok" or a final refusal: the queue stays as it is.
+    # A refusal that passes with time: $Sent goes back - added to newer taps, or replaced by a newer hold or
+    # preset - and the item waits $retryAfter seconds.
+    param($Queue, $Sent, [string]$Result, [datetime]$Now)
+    if (-not $retryAfter.ContainsKey($Result)) { return $Queue }
+    if ($null -eq $Queue) { $q = $Sent.Clone() }
+    elseif ($Queue.kind -eq 'step' -and $Sent.kind -eq 'step') { $q = $Queue.Clone(); $q.n = $Queue.n + $Sent.n; $q.since = $Sent.since }
+    else { $q = $Queue.Clone() }
+    $wait = $Now.AddSeconds($retryAfter[$Result])
+    if ($q.notBefore -lt $wait) { $q.notBefore = $wait }
+    $q
 }
 
 function Stop-OlderInstance {
@@ -317,6 +379,10 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
     $script:Ctx = $null
     $script:HelloFailing = $false
     $script:StaleShown = $false
+    $script:Queue = $null                        # the one press waiting to go out (Add-DeskPress)
+    $script:InFlight = $null                     # @{ seq; item; at } sent, no result yet
+    $script:Seq = 0
+    $script:LastSendFailedAt = [DateTime]::MinValue  # red light on the panel for 30 s after a failed send
 
     function script:Send-ToPage([hashtable]$Obj) {
         if ($script:Wv -and $script:Ready) {
@@ -325,11 +391,12 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
         }
     }
 
-    function script:Send-State([string]$Refused = '') {
+    function script:Send-State {
         $stale = ($null -eq $script:Desk) -or (([DateTime]::UtcNow - $script:LastPushAt).TotalSeconds -gt $StaleSeconds)
         $d = $script:Desk
+        $offline = $script:HelloFailing -or (([DateTime]::UtcNow - $script:LastSendFailedAt).TotalSeconds -lt 30)
         Send-ToPage @{
-            type = 'state'; stale = $stale; refused = $Refused
+            type = 'state'; stale = $stale; offline = $offline
             h = $(if ($d) { $d.h } else { $null }); status = $(if ($d) { $d.status } else { '' })
             presets = $(if ($d) { @($d.presets) } else { @() }); locked = $(if ($d) { $d.locked } else { $false })
         }
@@ -341,9 +408,27 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
         $json = ConvertTo-Json -InputObject $Body -Compress
         try {
             $content = New-Object System.Net.Http.StringContent($json, [Text.Encoding]::UTF8, 'application/json')
-            $null = $script:Pending.Add(@{ what = $(if ($Body.cmd) { $Body.cmd } else { $Kind }); task = $script:Http.PostAsync($url, $content) })
+            $null = $script:Pending.Add(@{ what = $(if ($Body.cmd) { $Body.cmd } else { $Kind }); seq = $Body.seq; task = $script:Http.PostAsync($url, $content) })
         }
         catch { Write-Log "ERROR send $Kind`: $($_.Exception.Message)" }
+    }
+
+    function script:Send-Queue {
+        # Tells the page what is waiting, so the arrow or preset stays lit until it went out.
+        $n = 0; $hold = ''; $preset = 0
+        foreach ($i in @($script:Queue, $(if ($script:InFlight) { $script:InFlight.item }))) {
+            if ($null -eq $i) { continue }
+            switch ($i.kind) { 'step' { $n += $i.n } 'hold' { $hold = $i.dir } 'preset' { $preset = $i.n } }
+        }
+        Send-ToPage @{ type = 'queue'; up = ($n -gt 0 -or $hold -eq 'up'); down = ($n -lt 0 -or $hold -eq 'down'); preset = $preset }
+    }
+
+    function script:Complete-InFlight([string]$Result) {
+        $sent = $script:InFlight.item
+        $script:InFlight = $null
+        if ($Result -ne 'ok' -and -not $retryAfter.ContainsKey($Result)) { Write-Log "command dropped: $($sent.kind) ($Result)" }
+        $script:Queue = Merge-DeskResult $script:Queue $sent $Result ([DateTime]::UtcNow)
+        Send-Queue
     }
 
     function script:Send-Hello {
@@ -366,8 +451,8 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
             $push = ConvertFrom-DeskPush $body
             if ($null -eq $push) { $resp.StatusCode = 400; Write-Log 'push refused: not valid JSON'; return }
             $script:Desk = $push; $script:LastPushAt = [DateTime]::UtcNow
-            if ($push.refused) { Write-Log "refused by Home Assistant: $($push.refused)" }
-            Send-State $push.refused
+            Send-State
+            if ($push.seq -gt 0 -and $push.result -and $script:InFlight -and $push.seq -eq $script:InFlight.seq) { Complete-InFlight $push.result }
             $resp.StatusCode = 204
         }
         catch { $resp.StatusCode = 500; Write-Log "ERROR push: $($_.Exception.Message)" }
@@ -391,10 +476,14 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
                     Send-State
                 }
                 'hide' { Hide-Flyout 'hide button' }
+                'stop' {
+                    $script:Queue = $null; $script:InFlight = $null
+                    Stop-Desk 'red button'
+                    Send-Queue
+                }
                 default {
-                    $c = Get-DeskCommand $m
-                    if ($null -eq $c) { return }
-                    if ($c.stop) { Stop-Desk 'red button' } else { Send-Webhook 'cmd' $c.body }
+                    $script:Queue = Add-DeskPress $script:Queue $m ([DateTime]::UtcNow)
+                    Send-Queue
                 }
             }
         }
@@ -450,7 +539,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
 
     function script:Set-FlyoutBounds {
         $scale = [DeskNative]::DpiAtCursor() / 96.0
-        $w = [int](500 * $scale); $h = [int](176 * $scale); $m = [int](12 * $scale)
+        $w = [int](500 * $scale); $h = [int](160 * $scale); $m = [int](12 * $scale)
         $wa = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position).WorkingArea
         $script:Form.Bounds = New-Object System.Drawing.Rectangle(($wa.Right - $w - $m), ($wa.Bottom - $h - $m), $w, $h)
     }
@@ -502,7 +591,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
     $menu.Padding = New-Object System.Windows.Forms.Padding(0, 4, 0, 4)
     # Open later than the click, so the closing menu does not take the focus from the new panel.
     $null = $menu.Items.Add('Open app', $null, { Invoke-Later 80 { Show-Flyout 'menu' } })
-    $null = $menu.Items.Add('Cancel', $null, { Stop-Desk 'menu Cancel' })
+    $null = $menu.Items.Add('Cancel', $null, { $script:Queue = $null; $script:InFlight = $null; Stop-Desk 'menu Cancel'; Send-Queue })
     $null = $menu.Items.Add('Exit', $null, { [System.Windows.Forms.Application]::ExitThread() })
     foreach ($it in $menu.Items) { $it.ForeColor = [System.Drawing.Color]::FromArgb(242, 242, 242); $it.Padding = New-Object System.Windows.Forms.Padding(8, 6, 24, 6) }
     $menu.add_Opened({ param($s, $e) $null = [DeskNative]::SetDwmInt($s.Handle, [DeskNative]::DWMWA_WINDOW_CORNER_PREFERENCE, [DeskNative]::DWMWCP_ROUNDSMALL) })
@@ -552,16 +641,45 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
             if (-not $p.task.IsCompleted) { continue }
             $script:Pending.RemoveAt($i)
             if ($p.task.Status -ne 'RanToCompletion') {
-                if ($p.what -ne 'hello') { Write-Log "ERROR $($p.what): Home Assistant not reachable"; Send-ToPage @{ type = 'error'; code = 'offline' } }
+                $script:LastSendFailedAt = [DateTime]::UtcNow
+                Send-State
+                if ($p.what -ne 'hello') {
+                    Write-Log "ERROR $($p.what): Home Assistant not reachable"
+                    # Not sent, so not done: drop it rather than move the desk late.
+                    if ($p.seq -and $script:InFlight -and $script:InFlight.seq -eq $p.seq) { $script:InFlight = $null; Send-Queue }
+                }
                 elseif (-not $script:HelloFailing) { Write-Log 'ERROR hello: Home Assistant not reachable (logged once until it answers)' }
                 if ($p.what -eq 'hello') { $script:HelloFailing = $true }
             }
             elseif (-not $p.task.Result.IsSuccessStatusCode) {
                 Write-Log "ERROR $($p.what): HTTP $([int]$p.task.Result.StatusCode)"
+                $script:LastSendFailedAt = [DateTime]::UtcNow
+                Send-State
             }
             elseif ($p.what -eq 'hello' -and $script:HelloFailing) { $script:HelloFailing = $false; Write-Log 'hello: Home Assistant answers again' }
         }
-        if (([DateTime]::UtcNow - $script:LastHelloAt).TotalSeconds -ge $HelloSeconds) { Send-Hello }
+        # The queue: one command in flight at a time. No result within 6 s means the push got lost; the command
+        # is dropped, not repeated, because Home Assistant may have done it already.
+        $now = [DateTime]::UtcNow
+        if ($script:InFlight -and ($now - $script:InFlight.at).TotalSeconds -gt 6) {
+            Write-Log "command dropped: $($script:InFlight.item.kind) (no result from Home Assistant)"
+            $script:InFlight = $null; Send-Queue
+        }
+        if (-not $script:InFlight) {
+            $s = Get-DeskSend $script:Queue $now
+            if ($s -and $s.drop) {
+                if ($s.why) { Write-Log "command dropped: $($script:Queue.kind) ($($s.why))" }
+                $script:Queue = $null; Send-Queue
+            }
+            elseif ($s) {
+                $script:Seq++
+                $s.body.seq = $script:Seq
+                $script:InFlight = @{ seq = $script:Seq; item = $s.item; at = $now }
+                $script:Queue = $s.rest
+                Send-Webhook 'cmd' $s.body
+            }
+        }
+        if (($now - $script:LastHelloAt).TotalSeconds -ge $HelloSeconds) { Send-Hello }
         # Mark the height stale once, when the pushes stop.
         $stale = ($null -ne $script:Desk) -and (([DateTime]::UtcNow - $script:LastPushAt).TotalSeconds -gt $StaleSeconds)
         if ($stale -and -not $script:StaleShown) { Send-State; Write-Log 'no push for 90 s' }
