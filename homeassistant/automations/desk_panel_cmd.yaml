@@ -15,14 +15,16 @@
 #   locked     the last command did not move the desk as expected (input_boolean.desk_panel_locked)
 #   not_ready  no numeric height, or the board booted less than 30 s ago (58 cm placeholder)
 #   busy       the desk is moving, its height changed less than 3 s ago, or the meeting reminder runs
-#   too_soon   less than 6 s since the last panel move
-#   budget     4 panel moves in the last 2 minutes
+#   too_soon   less than 3 s since the last panel move
+#   budget     10 panel moves in the last 2 minutes
 #   motor      more than 60 s of estimated motor time in the last 10 minutes (the motors' 10 % duty cycle)
-#   reverse    the opposite direction less than 20 s after the last move
+#   reverse    the opposite direction less than 5 s after the last move
 #   limit      the target is outside min + 0.3 .. max - 0.3
 #   no_preset  no preset in that direction, or the preset is empty
 #   here       a preset the desk is already at
-# The thresholds are deliberately cautious; the cause of E13 on this box is not known.
+# The cause of E13 on this box is not known. What stays strict is what came before it: no command while the
+# desk moves or within 3 s after (busy), the motor duty cycle and the lock. The pacing limits were relaxed
+# after the first live test (2026-10-21): 6 s / 4 per 2 min / 20 s made the panel feel dead.
 # Every command except hello ends with the event desk_panel_result {seq, result}: "ok" or the refusal.
 # desk_panel_push sends it to the panel, which keeps refused steps queued and retries them quietly.
 #
@@ -112,10 +114,10 @@ actions:
       {%- elif cmd == 'preset' and (target | float(0) - h) | abs < 0.5 -%}here
       {%- elif cmd == 'step' and (steps == 0 or (target | float(0) - h) * (1 if steps > 0 else -1) < 0.25) -%}limit
       {%- elif cmd != 'step' and (target | float(0) < hmin + 0.3 or target | float(0) > hmax - 0.3) -%}limit
-      {%- elif now_ts - last < 6 -%}too_soon
-      {%- elif entries | selectattr('t', 'gt', now_ts - 120) | list | count >= 4 -%}budget
+      {%- elif now_ts - last < 3 -%}too_soon
+      {%- elif entries | selectattr('t', 'gt', now_ts - 120) | list | count >= 10 -%}budget
       {%- elif (entries | map(attribute='s') | sum) + est > 60 -%}motor
-      {%- elif last_dir != '' and last_dir != dir and now_ts - last < 20 -%}reverse
+      {%- elif last_dir != '' and last_dir != dir and now_ts - last < 5 -%}reverse
       {%- endif -%}
 - if: "{{ reason | trim != '' }}"
   then:

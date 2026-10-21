@@ -26,7 +26,8 @@ Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC
 - **No messages.** A press lights the button (green; stop red). What waits stays lit until it goes out: when Home
   Assistant refuses a move for now (too soon, busy, move budget), the panel keeps it queued and sends it again,
   quietly, as soon as the guards allow — like a handset with a delay. A hold or a preset replaces queued taps,
-  stop empties the queue, and an item that could not go out within 3 minutes is dropped, not done late.
+  stop empties the queue, and an item that could not go out within 20 s is dropped, not done late. Hiding the
+  panel empties the queue too: the desk never moves on its own while nobody looks at the panel.
 - The preset the desk stands at glows green.
 - Status lights under the height, one lit at a time: **green** ready · **yellow** moving or a command waits ·
   **red** locked, no data from Home Assistant, or Home Assistant does not answer.
@@ -51,15 +52,16 @@ Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC
   | `locked` | the last command did not move the desk as expected; turn off **Desk panel locked** after a look at the desk |
   | `not_ready` | no height reading, or the board booted less than 30 s ago |
   | `busy` | the desk moves, its height changed less than 3 s ago, or the meeting reminder runs |
-  | `too_soon` | less than 6 s since the last panel move |
-  | `budget` | 4 panel moves in the last 2 minutes |
+  | `too_soon` | less than 3 s since the last panel move |
+  | `budget` | 10 panel moves in the last 2 minutes |
   | `motor` | more than 60 s of motor time in the last 10 minutes (the motors' 10 % duty cycle) |
-  | `reverse` | the opposite direction less than 20 s after the last move |
+  | `reverse` | the opposite direction less than 5 s after the last move |
   | `limit` | the step would end closer than 3 mm to the minimum or maximum height (a longer step stops 3 mm short) |
   | `no_preset` | no preset in that direction, or the preset is empty |
   | `here` | the desk is already at that preset |
 
-  The thresholds are cautious guesses: the cause of E13 on this box is not known.
+  The cause of E13 on this box is not known. Strict: no command while the desk moves or within 3 s after, the
+  motor duty cycle and the lock. The pacing limits (3 s, 10 per 2 min, 5 s) were relaxed after the first live test.
 - Stop is never refused, but a burst of clicks gives at most one stop every ~2.3 s.
 
 ## Requirements
