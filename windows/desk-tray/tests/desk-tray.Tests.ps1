@@ -171,9 +171,10 @@ Describe 'Get-DeskSend' {
         $s.item.n | Should Be -20
         $s.rest.n | Should Be -6
     }
-    It 'drops taps that cancelled out, and items older than 3 minutes' {
+    It 'drops taps that cancelled out, and items older than 20 s' {
         (Get-DeskSend (Taps $null @('up', 'down') $t0) $t0.AddSeconds(1)).drop | Should Be $true
-        $old = Get-DeskSend (Taps $null @('up') $t0) $t0.AddSeconds(181)
+        (Get-DeskSend (Taps $null @('up') $t0) $t0.AddSeconds(19)).body.cmd | Should Be 'step'
+        $old = Get-DeskSend (Taps $null @('up') $t0) $t0.AddSeconds(21)
         $old.drop | Should Be $true
         $old.why | Should Be 'too old'
     }

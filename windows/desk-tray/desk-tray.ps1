@@ -14,7 +14,8 @@
   target from its own readings (this script never sends a height) and pushes back the result for each seq.
   Presses wait in a queue of one item here: a refusal that passes with time (too soon, busy, move budget) keeps
   the item queued and it is sent again, quietly, as soon as it can go; the panel shows no messages. A hold or a
-  preset replaces queued taps, and an item older than 3 minutes is dropped.
+  preset replaces queued taps. An item that could not go out within 20 s is dropped, and hiding the panel
+  empties the queue: the desk never moves on its own while nobody looks at the panel.
   The control box ignores stop during a move it runs itself: the handset is the only reliable stop.
 
   No Home Assistant token on the PC, no third-party agent, no MQTT.
@@ -51,7 +52,7 @@ $knownRefusals = @('locked', 'not_ready', 'busy', 'too_soon', 'budget', 'motor',
 # item (locked shows as the red dot; limit, no_preset and here cannot change by waiting).
 $retryAfter = @{ too_soon = 1; busy = 1; not_ready = 3; budget = 3; motor = 3; reverse = 3 }
 $settleMs = 700              # quiet time after the last tap before the summed step goes out
-$queueMaxAgeSeconds = 180    # an item that could not go out for this long is dropped, not done late
+$queueMaxAgeSeconds = 20     # an item that could not go out for this long is dropped, not done late
 $maxStep = 20                # taps per command (6 cm); more stay queued for the next one
 $inv = [Globalization.CultureInfo]::InvariantCulture
 
@@ -564,6 +565,8 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
 
     function script:Hide-Flyout([string]$Why) {
         if (-not $script:Form.Visible) { return }
+        # Nothing waits while the panel is hidden: a queued move must not start when nobody is looking.
+        if ($script:Queue) { $script:Queue = $null; Send-Queue }
         Send-ToPage @{ type = 'hidden' }
         $script:Form.Hide()
         $script:LastHideAt = [DateTime]::UtcNow
