@@ -1,0 +1,41 @@
+# Pushes the desk state to the panel on the PC (windows/desk-tray) through rest_command.desk_panel_push:
+# on every change of height, status, presets or the lock, every 30 s, on the PC's hello and on a refusal.
+# Only while the PC said hello in the last 90 s: a PC that is off or asleep gets nothing, so the log does
+# not fill with timeouts. The push carries display data only; no command ever uses a height from the PC.
+# mode: queued with max 1 lets a call in flight finish and keeps one more, so the final height after a
+# move is never dropped.
+# Replace biurko_xxxxxx with your desk's entity prefix.
+id: desk_panel_push
+alias: Desk - panel push
+description: Sends height, status, presets and refusals to the PC panel while the PC is alive.
+triggers:
+- trigger: state
+  entity_id:
+  - sensor.biurko_xxxxxx_desk_height
+  - sensor.biurko_xxxxxx_desk_status
+  - sensor.biurko_xxxxxx_desk_m1_height
+  - sensor.biurko_xxxxxx_desk_m2_height
+  - sensor.biurko_xxxxxx_desk_m3_height
+  - sensor.biurko_xxxxxx_desk_m4_height
+  - input_boolean.desk_panel_locked
+- trigger: time_pattern
+  seconds: /30
+- trigger: event
+  event_type: desk_panel_hello
+- trigger: event
+  event_type: desk_panel_refused
+conditions:
+- condition: template
+  value_template: >-
+    {{ now().timestamp() - (state_attr('input_datetime.desk_panel_last_hello', 'timestamp') | float(0)) < 90 }}
+actions:
+- action: rest_command.desk_panel_push
+  data:
+    refused: >-
+      {{ trigger.event.data.reason if trigger.platform == 'event'
+         and trigger.event.event_type == 'desk_panel_refused' else '' }}
+  response_variable: push
+  continue_on_error: true
+mode: queued
+max: 1
+max_exceeded: silent

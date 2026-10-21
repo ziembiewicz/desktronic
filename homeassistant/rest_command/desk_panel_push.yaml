@@ -1,0 +1,24 @@
+# Add under rest_command: in configuration.yaml. The first rest_command ever needs a Home Assistant
+# restart; later changes need only the action rest_command.reload.
+# In secrets.yaml (never in a repository):
+#   desk_panel_push_url: http://192.0.2.20:8765/desk/      <- the PC's address
+#   desk_panel_push_token: <random, at least 24 bytes>     <- the same value as push_token on the PC
+# The token travels in plain HTTP inside the LAN; the PC also accepts pushes only from Home Assistant's
+# address (Windows firewall rule, windows/desk-tray/Set-DeskTrayFirewall.ps1).
+# Replace biurko_xxxxxx with your desk's entity prefix.
+desk_panel_push:
+  url: !secret desk_panel_push_url
+  method: POST
+  content_type: application/json
+  headers:
+    X-Desk-Token: !secret desk_panel_push_token
+  payload: >-
+    {{ {"h": states('sensor.biurko_xxxxxx_desk_height'),
+        "status": states('sensor.biurko_xxxxxx_desk_status'),
+        "m": [states('sensor.biurko_xxxxxx_desk_m1_height'),
+              states('sensor.biurko_xxxxxx_desk_m2_height'),
+              states('sensor.biurko_xxxxxx_desk_m3_height'),
+              states('sensor.biurko_xxxxxx_desk_m4_height')],
+        "locked": states('input_boolean.desk_panel_locked'),
+        "refused": refused | default('')} | tojson }}
+  timeout: 2

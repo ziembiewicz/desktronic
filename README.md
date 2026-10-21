@@ -8,7 +8,8 @@ handset.
 What you get in Home Assistant: current height, a height slider ("go to 110 cm" — not yet tested on this desk), memory presets M1–M4
 (buttons and their stored heights), nudge up/down, stop, desk status (idle / raising / lowering), idle time,
 plus Wi-Fi signal and the reason of the last reboot for diagnostics. Optionally, the desk raises itself for
-your meetings — see [Meeting reminder](#meeting-reminder-optional).
+your meetings — see [Meeting reminder](#meeting-reminder-optional) — and a desk panel sits in the Windows tray —
+see [Desk panel](#desk-panel-in-the-windows-tray-optional).
 
 ## Hardware
 
@@ -86,9 +87,22 @@ the switch is off, or right after the board boots (placeholder height). If the P
 nothing is sent and the desk stays where it is. The desk moves on its own here, so keep the space above and
 around it clear and the control box screwed to the frame (collision detection).
 
+## Desk panel in the Windows tray (optional)
+
+A tray icon on the PC opens a small dark panel: the live height on a seven-segment display, ▲▼ (tap = 3 mm,
+hold = to the nearest preset), the memory presets and a stop. Home Assistant pushes the height to the PC and
+guards every move: on this control box a burst of moves led to error **E13**, whose reset drives the desk to the
+bottom without a way to stop it. The handset stays the only reliable stop.
+
+- `windows/desk-tray/` — the panel, its installers and tests: [`windows/desk-tray/README.md`](windows/desk-tray/README.md).
+- `homeassistant/` — helpers `helpers/desk_panel.yaml`, `rest_command/desk_panel_push.yaml` and the automations
+  `desk_panel_cmd`, `desk_panel_stop`, `desk_panel_push`.
+
 ## Licenses
 
 - Files in this repository: **MIT** (see `LICENSE`).
 - **DeskUp Pro** has its own license: personal, non-commercial use only, no redistribution. This repository
   does not redistribute any DeskUp code — it only references it. Check the license before using it.
 - The manufacturer's manual is not included; get it from Desktronic.
+- The panel downloads the **WebView2 SDK** (Microsoft, BSD-3-Clause) and the **DSEG7** font (keshikan, SIL OFL 1.1)
+  at install time; neither is stored in this repository.

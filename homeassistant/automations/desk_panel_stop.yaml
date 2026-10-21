@@ -1,0 +1,39 @@
+# Stop from the desk panel on the PC (windows/desk-tray): any POST on its own webhook, LAN only.
+# Kept apart from desk_panel_cmd so a stop never waits behind a command and is never refused by a guard.
+# Two stop frames 300 ms apart: the board wakes a sleeping control box with a stop frame and then pauses
+# for 100 ms, and a command that arrives in that pause is dropped; the second frame lands after it.
+# The control box stops reliably only right after a command (measured: stop 0.4 s after "go to height" ->
+# 0.5 cm). During a "go to height" or preset move it ignored stop in 3 of 3 tries: the handset is the only
+# reliable stop. mode: single plus the 2 s pause keeps a burst of clicks to one stop every ~2.3 s.
+# With input_boolean.desk_panel_dry_run not exactly "off" the stop only goes to the logbook.
+# Replace biurko_xxxxxx with your desk's entity prefix and DESK_PANEL_STOP_WEBHOOK_ID with a random ID.
+id: desk_panel_stop
+alias: Desk - panel stop
+description: Stop from the PC panel. Reliable only right after a command; the handset always stops.
+triggers:
+- trigger: webhook
+  webhook_id: DESK_PANEL_STOP_WEBHOOK_ID
+  allowed_methods:
+  - POST
+  local_only: true
+actions:
+- if: "{{ states('input_boolean.desk_panel_dry_run') != 'off' }}"
+  then:
+  - action: logbook.log
+    data:
+      name: Desk panel
+      message: DRY stop
+      entity_id: input_boolean.desk_panel_dry_run
+  else:
+  - action: button.press
+    target:
+      entity_id: button.biurko_xxxxxx_desk_stop
+  - delay:
+      milliseconds: 300
+  - action: button.press
+    target:
+      entity_id: button.biurko_xxxxxx_desk_stop
+- delay:
+    seconds: 2
+mode: single
+max_exceeded: silent
