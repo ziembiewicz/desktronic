@@ -54,8 +54,9 @@ Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC
 
 ## Requirements
 
-- Windows 10 or 11 with the **WebView2 Runtime** (part of Windows 11 and of current Windows 10) and
-  **Windows PowerShell 5.1** (`powershell.exe`, 64-bit).
+- Windows 10 or 11 with the **WebView2 Runtime** (part of Windows 11 and of current Windows 10).
+- **PowerShell 7.4 or newer**, 64-bit (`pwsh.exe`; `winget install --id Microsoft.PowerShell`). The panel needs
+  no WinRT, so unlike the meeting reminder it does not have to run on Windows PowerShell 5.1.
 - Home Assistant with the desk from this repository and `rest_command` support.
 - The PC and Home Assistant on the same LAN; the PC needs a fixed address (a DHCP reservation is fine).
 
@@ -100,7 +101,7 @@ Everything lives in `%LOCALAPPDATA%\DeskTray\`:
 2. Download the WebView2 SDK and the display font (pinned versions, hash and signature checks):
 
    ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$dir\Install-DeskTrayDeps.ps1"
+   pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$dir\Install-DeskTrayDeps.ps1"
    ```
 
    It ends with `OK -> ...\DeskTray\lib`.
@@ -108,7 +109,7 @@ Everything lives in `%LOCALAPPDATA%\DeskTray\`:
 3. Allow the pushes, once, from your normal account (it asks for admin rights). Use Home Assistant's address:
 
    ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$dir\Set-DeskTrayFirewall.ps1" -HomeAssistant 192.0.2.10
+   pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$dir\Set-DeskTrayFirewall.ps1" -HomeAssistant 192.0.2.10
    ```
 
    This reserves `http://+:8765/desk/` for your account and adds the firewall rule **Desk tray push**
@@ -125,7 +126,7 @@ Everything lives in `%LOCALAPPDATA%\DeskTray\`:
 5. Run it once by hand and check the log starts with `start: WebView2 Runtime ..., listener=True`:
 
    ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$dir\desk-tray.ps1"
+   pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$dir\desk-tray.ps1"
    ```
 
    Click the icon: the height appears within a few seconds. Exit from the tray menu.
@@ -133,8 +134,9 @@ Everything lives in `%LOCALAPPDATA%\DeskTray\`:
 6. Start it at logon (no admin rights needed; no window, like the meeting reminder):
 
    ```powershell
+   $pwsh = (Get-Command pwsh.exe).Source
    $action = New-ScheduledTaskAction -Execute 'conhost.exe' `
-     -Argument "--headless powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$dir\desk-tray.ps1`""
+     -Argument "--headless `"$pwsh`" -NoProfile -ExecutionPolicy Bypass -File `"$dir\desk-tray.ps1`""
    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) `
      -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
@@ -149,7 +151,7 @@ Everything lives in `%LOCALAPPDATA%\DeskTray\`:
 menu, or:
 
 ```powershell
-Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" |
   Where-Object { $_.CommandLine -like '*desk-tray.ps1*' } | Invoke-CimMethod -MethodName Terminate
 ```
 
@@ -164,7 +166,8 @@ a fresh boot; outside dry run `test` is ignored. Clear **Desk panel moves** befo
 
 ## Check
 
-- Tests (pure functions), from this folder: `Import-Module Pester -MaximumVersion 4.99 -Force; Invoke-Pester .\tests`
+- Tests (pure functions), from this folder, in `pwsh` with Pester 4.10.1 (`Install-Module Pester -RequiredVersion 4.10.1 -Scope CurrentUser` once):
+  `Import-Module Pester -RequiredVersion 4.10.1 -Force; Invoke-Pester .\tests`
 - Log: `Get-Content "$env:LOCALAPPDATA\DeskTray\desk-tray.log" -Tail 20` — start, panel open times, refusals and
   errors. It never holds the webhook URLs, the token or the pushed data.
 - No height on the panel: is the task running, does the log show `listener=True`, is the PC's address in
