@@ -154,10 +154,21 @@ actions:
     value: "{{ target }}"
 # The move starts 1.0-1.2 s after the command. No start within 4 s, or a start the wrong way, is the
 # warning sign seen before E13: stop twice (the second catches the board's 100 ms wake-up window) and lock.
+# Except a small move (target less than 5 mm away) that does not start: the box ignores targets closer than
+# about 3 mm, and the height here is rounded to 1 mm, so a 3 mm step now and then falls inside that dead band.
+# That is skipped quietly (logbook "ignored"), not locked.
 - wait_template: "{{ (states('sensor.biurko_xxxxxx_desk_height') | float(0) - h) | abs >= 0.1 }}"
   timeout:
     seconds: 4
   continue_on_timeout: true
+- if: "{{ not wait.completed and ((target | float(0)) - h) | abs < 0.5 }}"
+  then:
+  - action: logbook.log
+    data:
+      name: Desk panel
+      message: "ignored: {{ cmd }} to {{ target }} cm from {{ h }} cm (inside the box's dead band)"
+      entity_id: input_boolean.desk_panel_locked
+  - stop: dead band
 - if: >-
     {{ not wait.completed
        or ((states('sensor.biurko_xxxxxx_desk_height') | float(0) - h > 0) != (dir == 'up')) }}
