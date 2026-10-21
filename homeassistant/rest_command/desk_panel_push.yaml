@@ -20,5 +20,6 @@ desk_panel_push:
               states('sensor.biurko_xxxxxx_desk_m3_height'),
               states('sensor.biurko_xxxxxx_desk_m4_height')],
         "locked": states('input_boolean.desk_panel_locked'),
-        "refused": refused | default('')} | tojson }}
+        "seq": seq | default(0) | int(0),
+        "result": result | default('')} | tojson }}
   timeout: 2

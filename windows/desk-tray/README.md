@@ -1,26 +1,35 @@
 # Desk panel in the Windows tray
 
 `desk-tray.ps1` puts a small desk icon in the Windows tray. A click opens a dark panel above the taskbar:
-the live desk height on a seven-segment display, ▲▼, the memory presets with their heights, and a red stop.
+the live desk height on a seven-segment display with three status lights, ▲▼, the memory presets with their
+heights, and a red stop.
 
 ```
                  ┌──────────── push: height, status, presets, refusals (LAN, token) ───────────┐
                  │                                                                              │
 Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC>:8765/desk/  ──>  desk-tray.ps1 ──> panel
        ^                                                                                │
-       └──── desk_panel_cmd  <── webhook {"cmd": "tap_up" | "hold_up" | "preset" ...} ──┤
+       └──── desk_panel_cmd  <── webhook {"cmd": "step" | "hold_up" | "preset", "seq"} ──┤
        └──── desk_panel_stop <── webhook (stop) ────────────────────────────────────────┘
 ```
 
 | Button | What the desk does |
 |---|---|
-| ▲ / ▼ tap (shorter than 0.6 s) | 3 mm up / down (the control box ignores smaller steps) |
+| ▲ / ▼ tap (shorter than 0.6 s) | 3 mm up / down (the control box ignores smaller steps); quick taps add up into one move, so 5 × ▲ = one move of 1.5 cm |
 | ▲ / ▼ hold (0.6 s or longer) | goes to the nearest memory preset above / below, as one command |
 | 1-4 | goes to that preset (presets with height 0 are hidden) |
 | red stop, tray menu **Cancel** | stop — see the warning below |
+| keys while the panel is active: ↑ / ↓ or F13 / F14 | one tap each (a keyboard dial mapped to these keys gives one tap per notch); F15 = stop, Esc = hide |
 
 - Home Assistant decides whether a move is safe and computes every target from its own readings. The PC never
   sends a height, so a forged push can at worst show a wrong number.
+- **No messages.** A press lights the button (green; stop red). What waits stays lit until it goes out: when Home
+  Assistant refuses a move for now (too soon, busy, move budget), the panel keeps it queued and sends it again,
+  quietly, as soon as the guards allow — like a handset with a delay. A hold or a preset replaces queued taps,
+  stop empties the queue, and an item that could not go out within 3 minutes is dropped, not done late.
+- The preset the desk stands at glows green.
+- Status lights under the height, one lit at a time: **green** ready · **yellow** moving or a command waits ·
+  **red** locked, no data from Home Assistant, or Home Assistant does not answer.
 - No Home Assistant token on the PC, no third-party agent, no MQTT. The PC only calls two webhooks and listens
   for pushes from Home Assistant's address.
 
@@ -34,7 +43,8 @@ Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC
   help; only the reset did (hold ▼ on the handset). **The reset drives the desk to the very bottom and cannot
   be stopped.** Before any reset, and before testing moves, clear everything under the desk top and around its
   edges all the way down, and take heavy things off the top.
-- That is why Home Assistant refuses a move when any of these holds (the panel shows a short note):
+- That is why Home Assistant refuses a move when any of these holds (the panel retries the first six quietly
+  and drops the rest; `locked` turns the red light on):
 
   | Refusal | Meaning |
   |---|---|
@@ -45,7 +55,7 @@ Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC
   | `budget` | 4 panel moves in the last 2 minutes |
   | `motor` | more than 60 s of motor time in the last 10 minutes (the motors' 10 % duty cycle) |
   | `reverse` | the opposite direction less than 20 s after the last move |
-  | `limit` | the target is closer than 3 mm to the minimum or maximum height |
+  | `limit` | the step would end closer than 3 mm to the minimum or maximum height (a longer step stops 3 mm short) |
   | `no_preset` | no preset in that direction, or the preset is empty |
   | `here` | the desk is already at that preset |
 
@@ -168,8 +178,8 @@ a fresh boot; outside dry run `test` is ignored. Clear **Desk panel moves** befo
 
 - Tests (pure functions), from this folder, in `pwsh` with Pester 4.10.1 (`Install-Module Pester -RequiredVersion 4.10.1 -Scope CurrentUser` once):
   `Import-Module Pester -RequiredVersion 4.10.1 -Force; Invoke-Pester .\tests`
-- Log: `Get-Content "$env:LOCALAPPDATA\DeskTray\desk-tray.log" -Tail 20` — start, panel open times, refusals and
-  errors. It never holds the webhook URLs, the token or the pushed data.
+- Log: `Get-Content "$env:LOCALAPPDATA\DeskTray\desk-tray.log" -Tail 20` — start, panel open times, dropped
+  commands and errors. It never holds the webhook URLs, the token or the pushed data.
 - No height on the panel: is the task running, does the log show `listener=True`, is the PC's address in
   `desk_panel_push_url` current, and did Home Assistant get a hello (helper **Desk panel last hello**)?
 
