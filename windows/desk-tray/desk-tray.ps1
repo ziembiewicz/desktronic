@@ -156,9 +156,30 @@ function Start-Main {
     try { Stop-OlderInstance } catch { Write-Log "ERROR older copy check: $($_.Exception.Message)" }
 
     Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-    # On .NET the WinForms and drawing types are split over several assemblies; the compiler needs them all.
-    $refs = 'System.Windows.Forms', 'System.Windows.Forms.Primitives', 'System.Drawing', 'System.Drawing.Primitives',
-            'System.Drawing.Common', 'System.ComponentModel.Primitives', 'System.Runtime.InteropServices'
+    # On .NET the WinForms and drawing types are split over several assemblies, and the split changes between
+    # .NET versions (.NET 10 moved part of System.Drawing into System.Private.Windows.GdiPlus). So the compiler
+    # gets what WinForms and System.Drawing depend on, found at run time: assemblies PowerShell ships as
+    # reference assemblies ($PSHOME\ref) by name, the Windows Desktop ones (the folder of System.Windows.Forms)
+    # by path. Anything else is left out.
+    $inRef = @{}
+    Get-ChildItem (Join-Path $PSHOME 'ref') -Filter *.dll -ErrorAction SilentlyContinue | ForEach-Object { $inRef[$_.BaseName] = $true }
+    $desktopDir = Split-Path -Parent ([System.Windows.Forms.Form].Assembly.Location)
+    $refs = New-Object System.Collections.Generic.List[string]
+    $seen = @{}
+    $queue = New-Object System.Collections.Generic.Queue[Reflection.Assembly]
+    $queue.Enqueue([System.Windows.Forms.Form].Assembly)
+    $queue.Enqueue([System.Drawing.Bitmap].Assembly)
+    while ($queue.Count -gt 0) {
+        $a = $queue.Dequeue()
+        $n = $a.GetName().Name
+        if ($seen.ContainsKey($n)) { continue }
+        $seen[$n] = $true
+        if ($inRef.ContainsKey($n)) { $refs.Add($n) }
+        elseif ($a.Location -and (Split-Path -Parent $a.Location) -eq $desktopDir) { $refs.Add($a.Location) }
+        foreach ($r in $a.GetReferencedAssemblies()) {
+            if (-not $seen.ContainsKey($r.Name)) { try { $queue.Enqueue([Reflection.Assembly]::Load($r)) } catch { } }
+        }
+    }
     try {
     Add-Type -ReferencedAssemblies $refs -TypeDefinition @'
 using System;
@@ -251,7 +272,8 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
     }
     catch {
         $errs = @($_.Exception.Errors | Select-Object -First 3 | ForEach-Object { $_.ToString() }) -join ' | '
-        Write-Log "ERROR compiling the window helpers: $($_.Exception.Message) $errs"
+        $byPath = @($refs | Where-Object { $_ -match '[\\/]' } | ForEach-Object { Split-Path -Leaf $_ }) -join ', '
+        Write-Log "ERROR compiling the window helpers (.NET $([Environment]::Version), by path: $byPath): $($_.Exception.Message) $errs"
         exit 1
     }
     # Per-monitor-v2 DPI for this thread, before any window exists.
