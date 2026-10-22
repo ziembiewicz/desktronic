@@ -6,7 +6,7 @@ shows as a Windows notification, takes the start time from it, and tells Home As
 ```
 Outlook on the web (Edge) ──toast──> meeting-reminder.ps1 ──POST webhook (LAN only)──> HA: desk_meeting_reminder
                                      keeps T0 in memory       T0 - 30 s: {"step":"warn"}   one nudge
-                                                              T0:        {"step":"go"}     two nudges, 3 s, M2
+                                                              T0:        {"step":"go"}     two nudges, 3 s, M3
 ```
 
 - The PC keeps the time; Home Assistant keeps no schedule and only moves the desk.
