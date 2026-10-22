@@ -56,7 +56,7 @@ Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC
 
   | Refusal | Meaning |
   |---|---|
-  | `locked` | the last command did not move the desk as expected (it did not start within 4 s, or started the wrong way); turn off **Desk panel locked** after a look at the desk |
+  | `locked` | the last command did not move the desk as expected (the box did not report a move within 4 s, or reported the wrong direction); turn off **Desk panel locked** after a look at the desk |
   | `not_ready` | no height reading, or the board booted less than 30 s ago |
   | `busy` | the desk moves, its height changed less than 3 s ago, or the meeting reminder runs |
   | `too_soon` | less than 3 s since the last panel move |

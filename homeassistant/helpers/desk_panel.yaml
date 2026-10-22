@@ -11,7 +11,7 @@
   icon: mdi:test-tube
 
 # input_boolean.desk_panel_locked: on = the panel refuses every move. The command automation turns it on
-# when a command did not move the desk, or moved it the wrong way, within 4 s: on this control box an
+# when the box did not report a move within 4 s, or reported the wrong direction: on this control box an
 # ignored command came right before the E13 lock-up. Only a person turns it off, after a look at the desk.
 - id: desk_panel_locked
   name: Desk panel locked
