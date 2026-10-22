@@ -27,7 +27,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#202227;color:#e8eaee;
 .ib{width:28px;height:24px;border-radius:5px;display:flex;align-items:center;justify-content:center;color:#a8aeb8;font-size:14px}
 .ib:hover{background:rgba(255,255,255,.07)}
 #gear{opacity:.35}
-.lcd{position:relative;border-radius:8px;background:linear-gradient(180deg,#0b0c0e 0%,#050506 100%);border:1px solid #000;
+.lcd{position:relative;flex-shrink:0;border-radius:8px;background:linear-gradient(180deg,#0b0c0e 0%,#050506 100%);border:1px solid #000;
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.04);padding:18px 14px 16px 22px;display:flex;align-items:center;gap:6px;overflow:hidden}
 .gl{position:absolute;inset:0;background:linear-gradient(115deg,rgba(255,255,255,.07) 0%,rgba(255,255,255,0) 32%);pointer-events:none}
 .hv{display:flex;align-items:baseline;gap:4px;min-width:118px}
@@ -36,11 +36,25 @@ html,body{margin:0;height:100%;overflow:hidden;background:#202227;color:#e8eaee;
 #h.stale{color:#4f5a66;text-shadow:none}
 .cm{font-size:12px;color:#7fb4d6}
 button{border:0;background:transparent;cursor:pointer;border-radius:8px;touch-action:none;font-family:inherit}
-.ar{width:48px;height:52px;color:#ffffff;font-size:20px}
-.ar:hover{background:rgba(255,255,255,.06)}
-.ar.queued{color:#7dffad;text-shadow:0 0 8px rgba(47,224,122,.9);box-shadow:inset 0 0 0 2px rgba(47,224,122,.8),0 0 14px rgba(47,224,122,.45)}
-.ar.press,.pb.press{background:rgba(47,224,122,.38);color:#c9ffdd;box-shadow:0 0 16px rgba(47,224,122,.55)}
+.ar{width:44px;height:52px;color:#ffffff;font-size:20px;flex-shrink:0}
+.ar:hover,.go:hover{background:rgba(255,255,255,.06)}
+.ar.press,.pb.press,.go.press{background:rgba(47,224,122,.38);color:#c9ffdd;box-shadow:0 0 16px rgba(47,224,122,.55)}
 .pb.queued{box-shadow:inset 0 0 0 2px rgba(47,224,122,.8),0 0 14px rgba(47,224,122,.45)}
+/* "Ustaw" row: the arrows and the dial only change the number; the desk moves on the go button or Enter. */
+.set{position:relative;border-radius:8px;background:linear-gradient(180deg,#0b0c0e 0%,#050506 100%);border:1px solid #000;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.04);padding:8px 12px;display:flex;align-items:center;gap:8px}
+.set .lbl{font-size:14px;color:#b9c0cb;width:58px}
+#tv{flex:1;min-width:0;height:52px;border:0;outline:0;border-radius:8px;background:#000;text-align:center;padding:0 10px;
+  font-family:"DSEG7",ui-monospace,monospace;font-size:30px;color:#d9f3ff;caret-color:#ffc21a;
+  text-shadow:0 0 1px rgba(200,235,255,.9),0 0 10px rgba(80,170,255,.35);box-shadow:inset 0 0 0 1px #3a3e46,inset 0 2px 6px rgba(0,0,0,.8)}
+#tv::selection{background:transparent}
+#tv.stale{color:#4f5a66;text-shadow:none}
+#tv.edit{color:#ffe7a3;text-shadow:0 0 1px #ffe7a3,0 0 10px rgba(255,194,26,.45);box-shadow:inset 0 0 0 2px #ffc21a,0 0 14px rgba(255,194,26,.45)}
+#tv.bad,.pb.bad{box-shadow:inset 0 0 0 2px #ff5c5c,0 0 14px rgba(255,46,46,.55)}
+.go{width:52px;height:52px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:22px;color:#4f5a66;
+  box-shadow:inset 0 0 0 1px #2a2e35}
+.go.on{color:#7dffad;text-shadow:0 0 6px #2fe07a;box-shadow:inset 0 0 0 2px rgba(47,224,122,.8),0 0 14px rgba(47,224,122,.45)}
+.go.queued{color:#7dffad;box-shadow:inset 0 0 0 2px rgba(47,224,122,.8),0 0 14px rgba(47,224,122,.45)}
 .sep{width:1px;height:30px;background:rgba(255,255,255,.08);margin:0 4px}
 #pr{display:flex;gap:2px;flex:1}
 .pb{flex:1;height:52px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;padding:0}
@@ -63,27 +77,30 @@ button{border:0;background:transparent;cursor:pointer;border-radius:8px;touch-ac
 <div class="lcd"><div class="gl"></div>
  <div><div class="hv"><div id="h" class="stale">--.-</div><div class="cm">cm</div></div>
   <div class="leds"><i id="lg" title="OK"></i><i id="ly" title="W ruchu albo polecenie czeka"></i><i id="lr" title="Blokada albo brak połączenia z HA"></i></div></div>
- <div style="display:flex;gap:2px;margin-left:6px">
-  <button class="ar" id="up" data-dir="up" title="Stuknij: 3 mm w górę. Przytrzymaj: najbliższy preset wyżej">&#9650;</button>
-  <button class="ar" id="down" data-dir="down" title="Stuknij: 3 mm w dół. Przytrzymaj: najbliższy preset niżej">&#9660;</button></div>
  <div class="sep"></div><div id="pr"></div>
  <button id="stop" title="Stop. Pewny stop w trakcie jazdy: pilot"><span class="ring"><span class="bar"></span></span></button>
 </div>
+<div class="set"><div class="lbl">Ustaw</div>
+ <button class="ar" id="down" title="0,5 cm mniej (biurko stoi)">&#9660;</button>
+ <input id="tv" inputmode="decimal" maxlength="6" spellcheck="false" autocomplete="off" title="Wysokość w cm; Enter albo ▶ jedzie, Esc wraca">
+ <button class="ar" id="up" title="0,5 cm więcej (biurko stoi)">&#9650;</button>
+ <button class="go" id="go" title="Jedź na tę wysokość (Enter)">&#9654;</button></div>
 </div>
 <script>
 "use strict";
 const wv = window.chrome && window.chrome.webview;
 const send = o => { if (wv) wv.postMessage(o); };
 const $ = id => document.getElementById(id);
-const HOLD_MS = 600;
+const STEP = 0.5;         // ▼▲ and the dial change the number by this much; the desk does not move
 // No messages: what waits is shown by lit buttons, a lock only by the red dot.
 let state = { h: null, status: "", presets: [], locked: false, stale: true, offline: false };
-let queue = { up: false, down: false, preset: 0 };
+let queue = { goto: 0, preset: 0 };
+let editing = false;       // the field holds a typed height; otherwise it follows the desk
 
 // A press lights the button for at least 180 ms, so even a quick tap is seen.
-function flash(el) {
-  el.classList.add("press");
-  clearTimeout(el._t); el._t = setTimeout(() => { if (!el._held) el.classList.remove("press"); }, 180);
+function flash(el, cls = "press", ms = 180) {
+  el.classList.add(cls);
+  clearTimeout(el["_t" + cls]); el["_t" + cls] = setTimeout(() => el.classList.remove(cls), ms);
 }
 
 function paint() {
@@ -92,7 +109,7 @@ function paint() {
   if (state.stale || state.h === null) { hEl.textContent = "--.-"; hEl.classList.add("stale"); }
   else { hEl.textContent = state.h.toFixed(1); hEl.classList.remove("stale"); }
   const light = (state.stale || state.offline || state.locked) ? "lr"
-              : (moving || queue.up || queue.down || queue.preset) ? "ly" : "lg";
+              : (moving || queue.goto || queue.preset) ? "ly" : "lg";
   for (const id of ["lg", "ly", "lr"]) $(id).classList.toggle("on", id === light);
   $("st").textContent = state.stale ? "brak danych z HA" : moving ? "w ruchu…" : "połączono";
   const pr = $("pr"); pr.innerHTML = "";
@@ -102,11 +119,37 @@ function paint() {
     if (queue.preset === p.n) b.classList.add("queued");
     b.innerHTML = '<span class="pn">' + p.n + '</span><span class="ph">' + p.h.toFixed(1) + '</span>';
     b.addEventListener("pointerdown", () => flash(b));
-    b.addEventListener("click", () => send({ type: "preset", n: p.n }));
+    b.addEventListener("click", () => { endEdit(); send({ type: "preset", n: p.n }); });
     pr.appendChild(b);
   }
-  $("up").classList.toggle("queued", queue.up);
-  $("down").classList.toggle("queued", queue.down);
+  const tv = $("tv");
+  if (!editing) tv.value = (state.stale || state.h === null) ? "" : state.h.toFixed(1);
+  tv.classList.toggle("edit", editing);
+  tv.classList.toggle("stale", !editing && state.stale);
+  $("go").classList.toggle("on", editing && typed() !== null);
+  $("go").classList.toggle("queued", !!queue.goto);
+}
+
+// The typed height as a number with one decimal, or null. A comma works as the decimal point.
+function typed() {
+  const v = $("tv").value.trim();
+  if (!/^\d{1,3}(\.\d?)?$/.test(v)) return null;
+  return Math.round(parseFloat(v) * 10) / 10;
+}
+function startEdit() { editing = true; paint(); }
+function endEdit() { editing = false; paint(); }
+function nudge(d) {
+  const base = editing && typed() !== null ? typed() : state.h;
+  if (base === null || base === undefined) return;
+  $("tv").value = (Math.round((base + d) * 10) / 10).toFixed(1);
+  editing = true; paint();
+}
+function go() {
+  flash($("go"));
+  const h = typed();
+  if (!editing || h === null) { if (editing) flash($("tv"), "bad", 600); return; }
+  send({ type: "goto", h: h });
+  endEdit();
 }
 
 if (wv) wv.addEventListener("message", e => {
@@ -115,59 +158,44 @@ if (wv) wv.addEventListener("message", e => {
     state = { h: m.h, status: m.status || "", presets: m.presets || [], locked: !!m.locked, stale: !!m.stale, offline: !!m.offline };
     paint();
   } else if (m.type === "queue") {
-    queue = { up: !!m.up, down: !!m.down, preset: m.preset || 0 };
+    queue = { goto: m.goto || 0, preset: m.preset || 0 };
     paint();
+  } else if (m.type === "refused") {
+    // A height out of range or a preset the desk is already at: a short red flash, no text.
+    if (m.kind === "goto") flash($("tv"), "bad", 600);
   } else if (m.type === "shown") {
     const p = $("p"); p.classList.remove("in"); void p.offsetWidth; p.classList.add("in");
+    $("tv").focus();
   } else if (m.type === "hidden") {
-    cancelPress();
+    endEdit();
   }
 });
 
-// Tap = released before HOLD_MS: one step of 3 mm (quick taps add up in desk-tray.ps1).
-// Hold = still pressed at HOLD_MS: one command to the nearest preset. Nothing repeats while held.
-let press = null;
-function startPress(btn) {
-  cancelPress();
-  btn._held = true; btn.classList.add("press");
-  press = { btn: btn, done: false, timer: setTimeout(() => {
-    if (!press) return;
-    send({ type: "hold", dir: press.btn.dataset.dir });
-    press.done = true;
-  }, HOLD_MS) };
+// The first key typed over the live height starts a new number instead of adding to it.
+$("tv").addEventListener("beforeinput", e => { if (!editing && e.inputType.startsWith("insert")) $("tv").value = ""; });
+// A comma (Polish keyboard) shows as the decimal point right away.
+$("tv").addEventListener("input", () => { const t = $("tv"); if (t.value.includes(",")) t.value = t.value.replace(",", "."); startEdit(); });
+for (const [id, d] of [["up", STEP], ["down", -STEP]]) {
+  $(id).addEventListener("pointerdown", () => flash($(id)));
+  $(id).addEventListener("click", () => nudge(d));
 }
-function endPress() {
-  if (!press) return;
-  clearTimeout(press.timer);
-  if (!press.done) send({ type: "tap", dir: press.btn.dataset.dir });
-  release(press.btn); press = null;
-}
-function cancelPress() {
-  if (!press) return;
-  clearTimeout(press.timer); release(press.btn); press = null;
-}
-function release(btn) { btn._held = false; flash(btn); }
-for (const id of ["up", "down"]) {
-  const b = $(id);
-  b.addEventListener("pointerdown", e => { b.setPointerCapture(e.pointerId); startPress(b); });
-  b.addEventListener("pointerup", endPress);
-  b.addEventListener("pointercancel", cancelPress);
-}
-window.addEventListener("blur", cancelPress);
+$("go").addEventListener("click", go);
+// The buttons do not take the focus from the field, so typing and Enter keep working after a click.
+for (const id of ["up", "down", "go"]) $(id).addEventListener("mousedown", e => e.preventDefault());
 $("stop").addEventListener("pointerdown", () => flash($("stop")));
-$("stop").addEventListener("click", () => { cancelPress(); send({ type: "stop" }); });
+$("stop").addEventListener("click", () => { endEdit(); send({ type: "stop" }); });
 $("hide").addEventListener("click", () => send({ type: "hide" }));
-// Keys while the panel is open and active: arrows or F13/F14 = one tap (a keyboard dial can send these, one
-// key per notch; the taps add up like clicks), F15 = stop, Esc = hide. A held key does not repeat.
+// Keys while the panel is open and active: arrows or F13/F14 change the number (a keyboard dial can send
+// these, one key per notch), Enter goes, F15 = stop, Esc drops the typed height, or hides the panel.
 const KEYS = { ArrowUp: "up", F13: "up", ArrowDown: "down", F14: "down" };
 window.addEventListener("keydown", e => {
   if (KEYS[e.key]) {
     e.preventDefault();
-    if (e.repeat) return;
     flash($(KEYS[e.key]));
-    send({ type: "tap", dir: KEYS[e.key] });
-  } else if (e.key === "F15") { e.preventDefault(); cancelPress(); flash($("stop")); send({ type: "stop" }); }
-  else if (e.key === "Escape") { send({ type: "hide" }); }
+    nudge(KEYS[e.key] === "up" ? STEP : -STEP);
+  } else if (e.key === "Enter") { e.preventDefault(); if (!e.repeat) go(); }
+  else if (e.key === "F15") { e.preventDefault(); endEdit(); flash($("stop")); send({ type: "stop" }); }
+  else if (e.key === "Escape") { if (editing) endEdit(); else send({ type: "hide" }); }
 });
 paint();
 send({ type: "ready" });

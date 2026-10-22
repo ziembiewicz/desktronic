@@ -89,8 +89,8 @@ around it clear and the control box screwed to the frame (collision detection).
 
 ## Desk panel in the Windows tray (optional)
 
-A tray icon on the PC opens a small dark panel: the live height on a seven-segment display, ▲▼ (tap = 3 mm,
-hold = to the nearest preset), the memory presets and a stop. Home Assistant pushes the height to the PC and
+A tray icon on the PC opens a small dark panel: the live height on a seven-segment display, the memory presets,
+a stop and a field to type a height to go to. Home Assistant pushes the height to the PC and
 guards every move: on this control box a burst of moves led to error **E13**, whose reset drives the desk to the
 bottom without a way to stop it. The handset stays the only reliable stop.
 

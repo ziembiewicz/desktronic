@@ -1,12 +1,10 @@
 # Commands from the desk panel on the PC (windows/desk-tray): {"cmd": ..., "seq": <number>} on a webhook, LAN only.
-#   step (n = -20..20)  go n x 0.3 cm up (n > 0) or down; the panel adds quick taps into one step, so the box
-#                       gets one command instead of many (it ignores targets closer than 3 mm). Near the
-#                       minimum or maximum the target stops 3 mm short of it.
-#   hold_up / hold_down go to the nearest memory preset above / below, by its height as Home Assistant knows it
+#   goto (h = cm)       go to the height typed in the panel; refused outside min + 0.3 .. max - 0.3
 #   preset (n = 1-4)    go to that preset's height
 #   hello               the PC is alive: Home Assistant pushes the height to it for the next 90 s
-# Moves use "go to height" with a target computed here from Home Assistant's own readings; nothing the PC
-# sends is a height. Stop has its own automation (desk_panel_stop), so it never waits behind a command.
+# Moves use "go to height". The only height the PC sends is the one typed in goto; it is checked here against
+# the desk's own minimum and maximum. Stop has its own automation (desk_panel_stop), so it never waits behind
+# a command.
 #
 # Why the guards. On 2026-10-21 about 16 moves in 80 s, with direction changes and commands sent while the
 # desk was moving, put this control box (Jiecang JCB36NE2A) into error E13. Only a reset cleared it, and the
@@ -19,14 +17,14 @@
 #   budget     10 panel moves in the last 2 minutes
 #   motor      more than 60 s of estimated motor time in the last 10 minutes (the motors' 10 % duty cycle)
 #   reverse    the opposite direction less than 5 s after the last move
-#   limit      the target is outside min + 0.3 .. max - 0.3
-#   no_preset  no preset in that direction, or the preset is empty
-#   here       a preset the desk is already at
+#   limit      the target is outside min + 0.3 .. max - 0.3, or not a number
+#   no_preset  the preset is empty
+#   here       the target is less than 5 mm away (the box ignores targets closer than about 3 mm)
 # The cause of E13 on this box is not known. What stays strict is what came before it: no command while the
 # desk moves or within 3 s after (busy), the motor duty cycle and the lock. The pacing limits were relaxed
 # after the first live test (2026-10-21): 6 s / 4 per 2 min / 20 s made the panel feel dead.
 # Every command except hello ends with the event desk_panel_result {seq, result}: "ok" or the refusal.
-# desk_panel_push sends it to the panel, which keeps refused steps queued and retries them quietly.
+# desk_panel_push sends it to the panel, which keeps a move refused for now queued and retries it quietly.
 #
 # With input_boolean.desk_panel_dry_run not exactly "off", moves are only written to the logbook. In dry run
 # the request may carry "test": {"h": <height>, "busy": true, "boot_age": <seconds>} to try every refusal
@@ -45,7 +43,7 @@ conditions:
 - condition: template
   value_template: >-
     {{ trigger.json is mapping and trigger.json.get('cmd') in
-       ['step', 'hold_up', 'hold_down', 'preset', 'hello'] }}
+       ['goto', 'preset', 'hello'] }}
 actions:
 - if: "{{ trigger.json.cmd == 'hello' }}"
   then:
@@ -59,7 +57,6 @@ actions:
 - variables:
     cmd: "{{ trigger.json.cmd }}"
     seq: "{{ trigger.json.get('seq', 0) | int(0) }}"
-    steps: "{{ [[trigger.json.get('n', 0) | int(0), -20] | max, 20] | min if trigger.json.cmd == 'step' else 0 }}"
     dry: "{{ states('input_boolean.desk_panel_dry_run') != 'off' }}"
     test: "{{ trigger.json.get('test') if dry and trigger.json.get('test') is mapping else {} }}"
     now_ts: "{{ now().timestamp() | int }}"
@@ -78,16 +75,12 @@ actions:
       {%- endfor -%}
       {{ ns.l }}
     target: >-
-      {%- if cmd == 'step' -%}{{ ([[h + 0.3 * steps, hmin + 0.3] | max, hmax - 0.3] | min) | round(1) }}
-      {%- elif cmd == 'hold_up' -%}
-        {%- set c = presets | selectattr('h', 'gt', h + 1) | sort(attribute='h') | list -%}{{ c[0].h if c else 0 }}
-      {%- elif cmd == 'hold_down' -%}
-        {%- set c = presets | selectattr('h', 'lt', h - 1) | sort(attribute='h', reverse=true) | list -%}{{ c[0].h if c else 0 }}
+      {%- if cmd == 'goto' -%}
+        {%- set v = trigger.json.get('h') -%}{{ (v | float(0) | round(1)) if v is number and v is not boolean else 0 }}
       {%- else -%}
         {%- set c = presets | selectattr('n', 'eq', trigger.json.get('n') | int(0)) | list -%}{{ c[0].h if c else 0 }}
       {%- endif -%}
-    dir: >-
-      {{ ('up' if steps > 0 else 'down') if cmd == 'step' else ('up' if target | float(0) > h else 'down') }}
+    dir: "{{ 'up' if target | float(0) > h else 'down' }}"
     est: "{{ (((target | float(0)) - h) | abs / 5.3 + 1) | round(1) }}"
     entries: >-
       {%- set ns = namespace(l=[]) -%}
@@ -110,10 +103,9 @@ actions:
               or not is_number(h_raw) or boot_age < 30 -%}not_ready
       {%- elif test.get('busy', false) or reminder or not quiet
               or not is_state('sensor.biurko_xxxxxx_desk_status', 'Idle') -%}busy
-      {%- elif target | float(0) <= 0 -%}no_preset
-      {%- elif cmd == 'preset' and (target | float(0) - h) | abs < 0.5 -%}here
-      {%- elif cmd == 'step' and (steps == 0 or (target | float(0) - h) * (1 if steps > 0 else -1) < 0.25) -%}limit
-      {%- elif cmd != 'step' and (target | float(0) < hmin + 0.3 or target | float(0) > hmax - 0.3) -%}limit
+      {%- elif target | float(0) <= 0 -%}{{ 'limit' if cmd == 'goto' else 'no_preset' }}
+      {%- elif target | float(0) < hmin + 0.3 or target | float(0) > hmax - 0.3 -%}limit
+      {%- elif (target | float(0) - h) | abs < 0.5 -%}here
       {%- elif now_ts - last < 3 -%}too_soon
       {%- elif entries | selectattr('t', 'gt', now_ts - 120) | list | count >= 10 -%}budget
       {%- elif (entries | map(attribute='s') | sum) + est > 60 -%}motor
@@ -154,21 +146,11 @@ actions:
     value: "{{ target }}"
 # The move starts 1.0-1.2 s after the command. No start within 4 s, or a start the wrong way, is the
 # warning sign seen before E13: stop twice (the second catches the board's 100 ms wake-up window) and lock.
-# Except a small move (target less than 5 mm away) that does not start: the box ignores targets closer than
-# about 3 mm, and the height here is rounded to 1 mm, so a 3 mm step now and then falls inside that dead band.
-# That is skipped quietly (logbook "ignored"), not locked.
+# Moves under 5 mm, which the box may ignore, never get here (refused as "here").
 - wait_template: "{{ (states('sensor.biurko_xxxxxx_desk_height') | float(0) - h) | abs >= 0.1 }}"
   timeout:
     seconds: 4
   continue_on_timeout: true
-- if: "{{ not wait.completed and ((target | float(0)) - h) | abs < 0.5 }}"
-  then:
-  - action: logbook.log
-    data:
-      name: Desk panel
-      message: "ignored: {{ cmd }} to {{ target }} cm from {{ h }} cm (inside the box's dead band)"
-      entity_id: input_boolean.desk_panel_locked
-  - stop: dead band
 - if: >-
     {{ not wait.completed
        or ((states('sensor.biurko_xxxxxx_desk_height') | float(0) - h > 0) != (dir == 'up')) }}
