@@ -147,13 +147,17 @@ actions:
 # The move starts 1.0-1.2 s after the command. No start within 4 s, or a start the wrong way, is the
 # warning sign seen before E13: stop twice (the second catches the board's 100 ms wake-up window) and lock.
 # Moves under 5 mm, which the box may ignore, never get here (refused as "here").
-- wait_template: "{{ (states('sensor.biurko_xxxxxx_desk_height') | float(0) - h) | abs >= 0.1 }}"
+# The direction comes from the box's own status, not from the height: after a short move the box may send a
+# single height frame, so the last reading can be a few mm off where the desk stopped, and the first frame of
+# the next move then looks like the wrong way (2026-10-22: goto 120 from a reading of 115.3, first frame
+# 115.1, a false lock). Raising / Lowering came 0.0-1.0 s after the first height frame, even for 1 mm moves.
+- wait_template: "{{ states('sensor.biurko_xxxxxx_desk_status') in ['Raising', 'Lowering'] }}"
   timeout:
     seconds: 4
   continue_on_timeout: true
 - if: >-
     {{ not wait.completed
-       or ((states('sensor.biurko_xxxxxx_desk_height') | float(0) - h > 0) != (dir == 'up')) }}
+       or states('sensor.biurko_xxxxxx_desk_status') != ('Raising' if dir == 'up' else 'Lowering') }}
   then:
   - action: button.press
     target:
