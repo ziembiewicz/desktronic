@@ -92,6 +92,25 @@ Describe 'Get-DueStep' {
         $s.Count | Should Be 0
         @(Get-DueStep -Schedule $s -Now (New-Time 17 0 1)).Count | Should Be 0
     }
+    It 'with GoLeadSeconds 15 warns at T0 - 30 s and goes at T0 - 15 s' {
+        $s = [System.Collections.ArrayList]::new()
+        Add-Meeting -Schedule $s -Start (New-Time 17 0) -Now (New-Time 16 46) | Should Be 'queued'
+        @(Get-DueStep -Schedule $s -Now (New-Time 16 59 29) -GoLeadSeconds 15).Count | Should Be 0
+        $warn = @(Get-DueStep -Schedule $s -Now (New-Time 16 59 31) -GoLeadSeconds 15)
+        $warn[0].Step | Should Be 'warn'
+        @(Get-DueStep -Schedule $s -Now (New-Time 16 59 40) -GoLeadSeconds 15).Count | Should Be 0
+        $go = @(Get-DueStep -Schedule $s -Now (New-Time 16 59 46) -GoLeadSeconds 15)
+        $go[0].Step | Should Be 'go'
+        $go[0].Start | Should Be (New-Time 17 0)
+        $s.Count | Should Be 0
+    }
+    It 'with GoLeadSeconds 15 skips a late go at T0 - 15 s + 11 s' {
+        $s = [System.Collections.ArrayList]::new()
+        [void](Add-Meeting -Schedule $s -Start (New-Time 17 0) -Now (New-Time 16 46))
+        [void](Get-DueStep -Schedule $s -Now (New-Time 16 59 31) -GoLeadSeconds 15)
+        $late = @(Get-DueStep -Schedule $s -Now (New-Time 16 59 56) -GoLeadSeconds 15)
+        $late[0].Step | Should Be 'skip-go'
+    }
     It 'skips a late go' {
         $s = [System.Collections.ArrayList]::new()
         [void](Add-Meeting -Schedule $s -Start (New-Time 17 0) -Now (New-Time 16 46))

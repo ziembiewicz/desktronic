@@ -66,8 +66,8 @@ desk. `esphome/desktronic.yaml` contains only overrides on top of it:
 ## Meeting reminder (optional)
 
 Stand up for your meetings without thinking about it. 30 s before a meeting the desk gives a short nudge (it
-goes 3 mm up and back down, which you feel rather than see); at the start it nudges twice, pauses for 3 s and rises to memory preset **M2**
-(set M2 to your standing height first). The start time comes from the reminder that Outlook on the web shows
+goes 3 mm up and back down, which you feel rather than see); 15 s before the start it nudges twice, pauses for 3 s and rises to memory preset **M3**
+(set M3 to your standing height first). The start time comes from the reminder that Outlook on the web shows
 as a Windows notification. Calendar blockers stay put: a reminder whose title contains a blocker word
 (default `Blocker`, configurable) does not move the desk.
 
@@ -82,7 +82,7 @@ as a Windows notification. Calendar blockers stay put: a reminder whose title co
 
   In all three files replace `biurko_xxxxxx` with your desk's entity prefix.
 
-The desk only ever moves **up**: nothing happens when it is already at M2 or higher, while it is moving, when
+The desk only ever moves **up**: nothing happens when it is already at M3 or higher, while it is moving, when
 the switch is off, or right after the board boots (placeholder height). If the PC sleeps or the script stops,
 nothing is sent and the desk stays where it is. The desk moves on its own here, so keep the space above and
 around it clear and the control box screwed to the frame (collision detection).

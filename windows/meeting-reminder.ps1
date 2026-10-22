@@ -8,7 +8,8 @@
   event title, the second line is "HH:MM <location>". This script reads the toasts through the Windows
   notification listener, takes the start time T0 from the second line and keeps it in memory.
 
-  At T0 - 30 s it posts {"step":"warn"} to a Home Assistant webhook, at T0 it posts {"step":"go"}.
+  At T0 - 30 s it posts {"step":"warn"} to a Home Assistant webhook, at T0 - 15 s it posts {"step":"go"}
+  (WarnLeadSeconds and GoLeadSeconds before T0): the desk is up when the meeting starts.
   Home Assistant only moves the desk (see homeassistant/). Nothing else leaves the PC: no titles,
   no locations, no times.
 
@@ -48,6 +49,7 @@ param(
     [string]$ConfigPath = (Join-Path $PSScriptRoot 'config.json'),
     [int]$PollSeconds = 2,
     [int]$WarnLeadSeconds = 30,
+    [int]$GoLeadSeconds = 15,
     [int]$MaxLeadMinutes = 60,
     [int]$LateSeconds = 10
 )
@@ -118,9 +120,11 @@ function Add-Meeting {
 function Get-DueStep {
     # Steps due at Now: 'warn', 'go', 'skip-warn' or 'skip-go'. Removes finished and skipped meetings
     # from the schedule. A skipped warning removes the meeting, so the desk never moves unwarned.
-    param([System.Collections.ArrayList]$Schedule, [datetime]$Now, [int]$WarnLeadSeconds = 30, [int]$LateSeconds = 10)
+    # The warning is due WarnLeadSeconds before the start, go GoLeadSeconds before it.
+    param([System.Collections.ArrayList]$Schedule, [datetime]$Now, [int]$WarnLeadSeconds = 30, [int]$LateSeconds = 10, [int]$GoLeadSeconds = 0)
     foreach ($e in @($Schedule)) {
         $warnAt = $e.Start.AddSeconds(-$WarnLeadSeconds)
+        $goAt = $e.Start.AddSeconds(-$GoLeadSeconds)
         if (-not $e.Warned -and $Now -ge $warnAt) {
             $e.Warned = $true
             if (($Now - $warnAt).TotalSeconds -le $LateSeconds) {
@@ -132,9 +136,9 @@ function Get-DueStep {
                 continue
             }
         }
-        if ($Now -ge $e.Start) {
+        if ($Now -ge $goAt) {
             $Schedule.Remove($e)
-            if (($Now - $e.Start).TotalSeconds -le $LateSeconds) {
+            if (($Now - $goAt).TotalSeconds -le $LateSeconds) {
                 [pscustomobject]@{ Start = $e.Start; Step = 'go' }
             }
             else {
@@ -212,7 +216,7 @@ function Start-Main {
     $listT = [System.Collections.Generic.IReadOnlyList[Windows.UI.Notifications.UserNotification]]
     $toastKind = [Windows.UI.Notifications.NotificationKinds]::Toast
     $generic = [Windows.UI.Notifications.KnownNotificationBindings]::ToastGeneric
-    Write-Log "start: access=$access apps=$($apps -join ',') poll=${PollSeconds}s warn=${WarnLeadSeconds}s maxlead=${MaxLeadMinutes}min blockers=$($blockerWords.Count)"
+    Write-Log "start: access=$access apps=$($apps -join ',') poll=${PollSeconds}s warn=${WarnLeadSeconds}s go=-${GoLeadSeconds}s maxlead=${MaxLeadMinutes}min blockers=$($blockerWords.Count)"
 
     $schedule = [System.Collections.ArrayList]::new()
     $seen = @{}
@@ -250,7 +254,7 @@ function Start-Main {
                 }
                 $seen = $current
             }
-            foreach ($d in @(Get-DueStep -Schedule $schedule -Now (Get-Date) -WarnLeadSeconds $WarnLeadSeconds -LateSeconds $LateSeconds)) {
+            foreach ($d in @(Get-DueStep -Schedule $schedule -Now (Get-Date) -WarnLeadSeconds $WarnLeadSeconds -LateSeconds $LateSeconds -GoLeadSeconds $GoLeadSeconds)) {
                 if ($d.Step -in 'warn', 'go') {
                     try {
                         Send-Step -Url $url -Step $d.Step

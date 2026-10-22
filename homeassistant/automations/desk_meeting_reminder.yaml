@@ -2,14 +2,14 @@
 # meeting and {"step":"go"} at its start. The PC keeps the time; this automation keeps no schedule
 # and only moves the desk:
 #   warn -> one nudge (script.desk_nudge)
-#   go   -> two nudges, a 3 s pause, then memory preset M2 (standing height)
-# It never lowers the desk: it moves only when the desk is idle and below M2, and both heights are real
+#   go   -> two nudges, a 3 s pause, then memory preset M3 (set it to your standing height)
+# It never lowers the desk: it moves only when the desk is idle and below M3, and both heights are real
 # readings (for about 5 s after the board boots the height shows the 58 cm placeholder).
 # The webhook accepts POST from the local network only; its ID is kept outside the repository.
 # Replace biurko_xxxxxx with your desk's entity prefix and MEETING_REMINDER_WEBHOOK_ID with a random ID.
 id: desk_meeting_reminder
 alias: Desk - meeting reminder
-description: Nudges the desk 30 s before a meeting and raises it to M2 at the start. Steps come from the PC (windows/meeting-reminder.ps1).
+description: Nudges the desk 30 s before a meeting and raises it to M3 at the start. Steps come from the PC (windows/meeting-reminder.ps1).
 triggers:
 - trigger: webhook
   webhook_id: MEETING_REMINDER_WEBHOOK_ID
@@ -28,9 +28,9 @@ conditions:
 - condition: template
   value_template: >-
     {% set h = states('sensor.biurko_xxxxxx_desk_height') %}
-    {% set m2 = states('sensor.biurko_xxxxxx_desk_m2_height') %}
-    {{ is_number(h) and is_number(m2) and h | float > 58.0 and m2 | float >= 60
-       and h | float < m2 | float - 0.5 }}
+    {% set m3 = states('sensor.biurko_xxxxxx_desk_m3_height') %}
+    {{ is_number(h) and is_number(m3) and h | float > 58.0 and m3 | float >= 60
+       and h | float < m3 | float - 0.5 }}
 actions:
 - if: "{{ trigger.json.step == 'warn' }}"
   then:
@@ -45,18 +45,18 @@ actions:
       seconds: 3
   - action: button.press
     target:
-      entity_id: button.biurko_xxxxxx_desk_m2
+      entity_id: button.biurko_xxxxxx_desk_m3
   - delay:
       seconds: 15
   - if: >-
       {{ (states('sensor.biurko_xxxxxx_desk_height') | float(0)
-          - states('sensor.biurko_xxxxxx_desk_m2_height') | float(0)) | abs > 0.5 }}
+          - states('sensor.biurko_xxxxxx_desk_m3_height') | float(0)) | abs > 0.5 }}
     then:
     - action: persistent_notification.create
       data:
-        title: Desk did not reach M2
+        title: Desk did not reach M3
         message: >-
-          Meeting reminder pressed M2, but the desk is at
+          Meeting reminder pressed M3, but the desk is at
           {{ states('sensor.biurko_xxxxxx_desk_height') }} cm
-          (M2 = {{ states('sensor.biurko_xxxxxx_desk_m2_height') }} cm).
+          (M3 = {{ states('sensor.biurko_xxxxxx_desk_m3_height') }} cm).
 mode: single
