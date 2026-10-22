@@ -1,33 +1,40 @@
 # Desk panel in the Windows tray
 
 `desk-tray.ps1` puts a small desk icon in the Windows tray. A click opens a dark panel above the taskbar:
-the live desk height on a seven-segment display with three status lights, ▲▼, the memory presets with their
-heights, and a red stop.
+the live desk height on a seven-segment display with three status lights, the memory presets with their
+heights and a red stop, and below them a row to set a height and go there.
 
 ```
                  ┌──────────── push: height, status, presets, refusals (LAN, token) ───────────┐
                  │                                                                              │
 Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC>:8765/desk/  ──>  desk-tray.ps1 ──> panel
        ^                                                                                │
-       └──── desk_panel_cmd  <── webhook {"cmd": "step" | "hold_up" | "preset", "seq"} ──┤
+       └──── desk_panel_cmd  <── webhook {"cmd": "goto" | "preset", "seq"} ─────────────┤
        └──── desk_panel_stop <── webhook (stop) ────────────────────────────────────────┘
 ```
 
 | Button | What the desk does |
 |---|---|
-| ▲ / ▼ tap (shorter than 0.6 s) | 3 mm up / down (the control box ignores smaller steps); quick taps add up into one move, so 5 × ▲ = one move of 1.5 cm |
-| ▲ / ▼ hold (0.6 s or longer) | goes to the nearest memory preset above / below, as one command |
+| height field (row **Ustaw**) | shows the live height; type a height (a comma works as the decimal point) |
+| ▼ / ▲ next to the field | 0.5 cm less / more in the field — **the desk does not move** |
+| ▶ or Enter | goes to the height in the field, as one command |
 | 1-4 | goes to that preset (presets with height 0 are hidden) |
 | red stop, tray menu **Cancel** | stop — see the warning below |
-| keys while the panel is active: ↑ / ↓ or F13 / F14 | one tap each (a keyboard dial mapped to these keys gives one tap per notch); F15 = stop, Esc = hide |
+| keys while the panel is active: ↑ / ↓ or F13 / F14 | like ▲ / ▼ (a keyboard dial mapped to these keys changes the field by 0.5 cm per notch); Enter = go, F15 = stop, Esc = back to the live height, a second Esc hides the panel |
 
-- Home Assistant decides whether a move is safe and computes every target from its own readings. The PC never
-  sends a height, so a forged push can at worst show a wrong number.
-- **No messages.** A press lights the button (green; stop red). What waits stays lit until it goes out: when Home
-  Assistant refuses a move for now (too soon, busy, move budget), the panel keeps it queued and sends it again,
-  quietly, as soon as the guards allow — like a handset with a delay. A hold or a preset replaces queued taps,
-  stop empties the queue, and an item that could not go out within 20 s is dropped, not done late. Hiding the
-  panel empties the queue too: the desk never moves on its own while nobody looks at the panel.
+- Home Assistant decides whether a move is safe. The only height the PC sends is the one typed in the field,
+  and Home Assistant checks it against the desk's own minimum and maximum. A forged push can at worst show a
+  wrong number.
+- Why a field and not ▲▼ that move the desk: the box starts a move 1.0-1.2 s after the command and has to be
+  given time between moves (see the guards below), so small steps felt sluggish. Setting the number first and
+  sending it once is one move instead of many.
+- **No messages.** A press lights the button (green; stop red). The field turns yellow while it holds a typed
+  height. What waits stays lit until it goes out: when Home Assistant refuses a move for now (too soon, busy,
+  move budget), the panel keeps it queued and sends it again, quietly, as soon as the guards allow — like a
+  handset with a delay. A newer height or preset replaces the queued one, stop empties the queue, and an item
+  that could not go out within 20 s is dropped, not done late. A height Home Assistant refuses for good (out of
+  range, or less than 5 mm away) flashes the field red. Hiding the panel empties the queue too: the desk never
+  moves on its own while nobody looks at the panel.
 - The preset the desk stands at glows green.
 - Status lights under the height, one lit at a time: **green** ready · **yellow** moving or a command waits ·
   **red** locked, no data from Home Assistant, or Home Assistant does not answer.
@@ -49,16 +56,16 @@ Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC
 
   | Refusal | Meaning |
   |---|---|
-  | `locked` | the last command did not move the desk as expected; turn off **Desk panel locked** after a look at the desk |
+  | `locked` | the last command did not move the desk as expected (it did not start within 4 s, or started the wrong way); turn off **Desk panel locked** after a look at the desk |
   | `not_ready` | no height reading, or the board booted less than 30 s ago |
   | `busy` | the desk moves, its height changed less than 3 s ago, or the meeting reminder runs |
   | `too_soon` | less than 3 s since the last panel move |
   | `budget` | 10 panel moves in the last 2 minutes |
   | `motor` | more than 60 s of motor time in the last 10 minutes (the motors' 10 % duty cycle) |
   | `reverse` | the opposite direction less than 5 s after the last move |
-  | `limit` | the step would end closer than 3 mm to the minimum or maximum height (a longer step stops 3 mm short) |
-  | `no_preset` | no preset in that direction, or the preset is empty |
-  | `here` | the desk is already at that preset |
+  | `limit` | the height is closer than 3 mm to the minimum or maximum, outside them, or not a number |
+  | `no_preset` | the preset is empty |
+  | `here` | the target is less than 5 mm away (the box ignores targets closer than about 3 mm) |
 
   The cause of E13 on this box is not known. Strict: no command while the desk moves or within 3 s after, the
   motor duty cycle and the lock. The pacing limits (3 s, 10 per 2 min, 5 s) were relaxed after the first live test.
@@ -188,7 +195,7 @@ a fresh boot; outside dry run `test` is ignored. Clear **Desk panel moves** befo
 ## Known limits
 
 - Presets changed on the handset reach Home Assistant only when the board restarts: until then the panel shows
-  the old heights and "hold" goes to the old height.
+  the old heights and a preset button goes to the old height.
 - Plain HTTP on the LAN: the token and the webhook IDs are visible on the network. The webhooks are `local_only`,
   so anyone on the home network who knows an ID can send a command; the guards still apply.
 - One PC only: Home Assistant pushes to one address.

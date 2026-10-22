@@ -119,95 +119,93 @@ Describe 'ConvertFrom-DeskPush' {
 
 $t0 = [datetime]'2026-10-21T20:00:00Z'
 function M([string]$json) { $json | ConvertFrom-Json }
-function Taps($q, [string[]]$dirs, [datetime]$at) { foreach ($d in $dirs) { $q = Add-DeskPress $q (M "{`"type`":`"tap`",`"dir`":`"$d`"}") $at }; $q }
+function Go($q, [string]$h, [datetime]$at) { Add-DeskPress $q (M "{`"type`":`"goto`",`"h`":$h}") $at }
 
 Describe 'Add-DeskPress' {
-    It 'adds quick taps up into one step' {
-        $q = Taps $null @('up', 'up', 'up', 'up', 'up') $t0
-        $q.kind | Should Be 'step'
-        $q.n | Should Be 5
+    It 'queues a typed height, rounded to 1 mm' {
+        $q = Go $null '102.47' $t0
+        $q.kind | Should Be 'goto'
+        $q.h | Should Be 102.5
+        $q.notBefore | Should Be $t0
     }
-    It 'lets up and down cancel out' {
-        (Taps $null @('up', 'up', 'up', 'up', 'up', 'down', 'down') $t0).n | Should Be 3
+    It 'takes a height sent as text with a decimal point' {
+        (Go $null '"98.5"' $t0).h | Should Be 98.5
     }
-    It 'waits 0.7 s after the last tap before the step may go' {
-        $q = Taps $null @('up') $t0
-        $q = Taps $q @('up') $t0.AddMilliseconds(500)
-        $q.notBefore | Should Be $t0.AddMilliseconds(1200)
-        $q.since | Should Be $t0
-    }
-    It 'replaces queued taps with a hold or a preset (the last decision wins)' {
-        $q = Taps $null @('up', 'up') $t0
-        $h = Add-DeskPress $q (M '{"type":"hold","dir":"down"}') $t0
-        $h.kind | Should Be 'hold'; $h.dir | Should Be 'down'
-        $p = Add-DeskPress $h (M '{"type":"preset","n":2}') $t0
+    It 'lets the newer height or preset win' {
+        $q = Go $null '90' $t0
+        $q = Go $q '110' $t0
+        $q.h | Should Be 110
+        $p = Add-DeskPress $q (M '{"type":"preset","n":2}') $t0
         $p.kind | Should Be 'preset'; $p.n | Should Be 2
-        (Taps $p @('up') $t0).kind | Should Be 'step'
+        (Go $p '95' $t0).kind | Should Be 'goto'
     }
-    It 'ignores anything else and never takes a height' {
-        $q = Taps $null @('up') $t0
-        (Add-DeskPress $q (M '{"type":"tap","dir":"sideways"}') $t0).n | Should Be 1
-        (Add-DeskPress $q (M '{"type":"preset","n":5}') $t0).kind | Should Be 'step'
-        (Add-DeskPress $q (M '{"type":"goto","h":58}') $t0).kind | Should Be 'step'
+    It 'ignores anything that is not a height or a preset' {
+        $q = Go $null '90' $t0
+        (Go $q '"abc"' $t0).h | Should Be 90
+        (Go $q '-5' $t0).h | Should Be 90
+        (Go $q 'null' $t0).h | Should Be 90
+        (Add-DeskPress $q (M '{"type":"preset","n":5}') $t0).kind | Should Be 'goto'
+        (Add-DeskPress $q (M '{"type":"tap","dir":"up"}') $t0).h | Should Be 90
+        (Add-DeskPress $q (M '{"type":"hold","dir":"up"}') $t0).h | Should Be 90
         Add-DeskPress $null (M '{"type":"hello"}') $t0 | Should BeNullOrEmpty
     }
 }
 
 Describe 'Get-DeskSend' {
-    It 'sends nothing before the quiet time is over' {
-        Get-DeskSend (Taps $null @('up') $t0) $t0.AddMilliseconds(600) | Should BeNullOrEmpty
+    It 'sends nothing for an empty queue or before notBefore' {
         Get-DeskSend $null $t0 | Should BeNullOrEmpty
+        $q = Go $null '90' $t0; $q.notBefore = $t0.AddSeconds(1)
+        Get-DeskSend $q $t0 | Should BeNullOrEmpty
     }
-    It 'sends the summed step' {
-        $s = Get-DeskSend (Taps $null @('up', 'up', 'up') $t0) $t0.AddSeconds(1)
-        $s.body.cmd | Should Be 'step'
-        $s.body.n | Should Be 3
-        $s.rest | Should BeNullOrEmpty
+    It 'sends the height at once' {
+        $s = Get-DeskSend (Go $null '102.5' $t0) $t0
+        $s.body.cmd | Should Be 'goto'
+        $s.body.h | Should Be 102.5
+        $s.item.kind | Should Be 'goto'
     }
-    It 'sends at most 20 taps and keeps the rest queued' {
-        $q = Taps $null (@('down') * 26) $t0
-        $s = Get-DeskSend $q $t0.AddSeconds(1)
-        $s.body.n | Should Be -20
-        $s.item.n | Should Be -20
-        $s.rest.n | Should Be -6
+    It 'sends the height with a decimal point whatever the culture' {
+        $c = [Threading.Thread]::CurrentThread.CurrentCulture
+        try {
+            [Threading.Thread]::CurrentThread.CurrentCulture = 'pl-PL'
+            ConvertTo-Json -InputObject (Get-DeskSend (Go $null '102.5' $t0) $t0).body -Compress | Should Match '"h":102\.5'
+        }
+        finally { [Threading.Thread]::CurrentThread.CurrentCulture = $c }
     }
-    It 'drops taps that cancelled out, and items older than 20 s' {
-        (Get-DeskSend (Taps $null @('up', 'down') $t0) $t0.AddSeconds(1)).drop | Should Be $true
-        (Get-DeskSend (Taps $null @('up') $t0) $t0.AddSeconds(19)).body.cmd | Should Be 'step'
-        $old = Get-DeskSend (Taps $null @('up') $t0) $t0.AddSeconds(21)
-        $old.drop | Should Be $true
-        $old.why | Should Be 'too old'
-    }
-    It 'sends a hold and a preset at once' {
-        (Get-DeskSend (Add-DeskPress $null (M '{"type":"hold","dir":"up"}') $t0) $t0).body.cmd | Should Be 'hold_up'
+    It 'sends a preset at once' {
         $p = Get-DeskSend (Add-DeskPress $null (M '{"type":"preset","n":3}') $t0) $t0
         $p.body.cmd | Should Be 'preset'
         $p.body.n | Should Be 3
     }
+    It 'drops an item older than 20 s' {
+        (Get-DeskSend (Go $null '90' $t0) $t0.AddSeconds(19)).body.cmd | Should Be 'goto'
+        $old = Get-DeskSend (Go $null '90' $t0) $t0.AddSeconds(21)
+        $old.drop | Should Be $true
+        $old.why | Should Be 'too old'
+    }
 }
 
 Describe 'Merge-DeskResult' {
-    $sent = @{ kind = 'step'; n = 3; since = $t0; notBefore = $t0 }
+    $sent = @{ kind = 'goto'; h = 102.5; since = $t0; notBefore = $t0 }
     It 'keeps the queue as it is after ok' {
         Merge-DeskResult $null $sent 'ok' $t0 | Should BeNullOrEmpty
-        (Merge-DeskResult (Taps $null @('up') $t0) $sent 'ok' $t0).n | Should Be 1
+        (Merge-DeskResult (Go $null '90' $t0) $sent 'ok' $t0).h | Should Be 90
     }
-    It 'requeues a step refused for now, added to newer taps, and waits' {
-        $q = Merge-DeskResult (Taps $null @('up', 'up') $t0) $sent 'too_soon' $t0
-        $q.n | Should Be 5
+    It 'requeues a move refused for now and waits' {
+        $q = Merge-DeskResult $null $sent 'too_soon' $t0
+        $q.h | Should Be 102.5
         $q.since | Should Be $t0
         $q.notBefore | Should Be $t0.AddSeconds(1)
         (Merge-DeskResult $null $sent 'budget' $t0).notBefore | Should Be $t0.AddSeconds(3)
     }
-    It 'lets a newer hold or preset win over a refused step' {
-        $q = Merge-DeskResult (Add-DeskPress $null (M '{"type":"preset","n":1}') $t0) $sent 'busy' $t0
-        $q.kind | Should Be 'preset'
+    It 'lets a newer height or preset win over a refused one' {
+        (Merge-DeskResult (Add-DeskPress $null (M '{"type":"preset","n":1}') $t0) $sent 'busy' $t0).kind | Should Be 'preset'
+        (Merge-DeskResult (Go $null '80' $t0) $sent 'busy' $t0).h | Should Be 80
     }
     It 'drops the item on a final refusal' {
         foreach ($r in 'locked', 'limit', 'no_preset', 'here', '') { Merge-DeskResult $null $sent $r $t0 | Should BeNullOrEmpty }
     }
     It 'does not change the item it was given' {
-        $null = Merge-DeskResult (Taps $null @('up') $t0) $sent 'too_soon' $t0
-        $sent.n | Should Be 3
+        $null = Merge-DeskResult $null $sent 'too_soon' $t0
+        $sent.notBefore | Should Be $t0
     }
 }

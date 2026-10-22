@@ -1,20 +1,19 @@
 <#
 .SYNOPSIS
-  Desk panel in the Windows tray: live desk height, small steps, memory presets and stop, through Home Assistant.
+  Desk panel in the Windows tray: live desk height, a height to go to, memory presets and stop, through Home Assistant.
 
 .DESCRIPTION
   A tray icon opens a small dark panel (panel.html in WebView2) above the taskbar. Home Assistant pushes the
   desk state to this script (HTTP POST to http://+:8765/desk/ with a shared token); the panel shows it.
   Buttons go back to Home Assistant as webhooks on the LAN, each with a sequence number ("seq"):
-    tap  up/down   {"cmd":"step","n":3}  - quick taps add up (up +1, down -1) into one move of n x 3 mm
-    hold up/down   {"cmd":"hold_up"}     - to the nearest memory preset in that direction (one command)
+    go to height   {"cmd":"goto","h":102.5} - the height typed in the panel (its arrows only change that number)
     preset 1-4     {"cmd":"preset","n":2}
     stop           POST to the separate stop webhook; it also empties the queue
-  Home Assistant decides whether a move is safe (homeassistant/automations/desk_panel_cmd.yaml), computes every
-  target from its own readings (this script never sends a height) and pushes back the result for each seq.
+  Home Assistant decides whether a move is safe (homeassistant/automations/desk_panel_cmd.yaml), checks the typed
+  height against the desk's own minimum and maximum, and pushes back the result for each seq.
   Presses wait in a queue of one item here: a refusal that passes with time (too soon, busy, move budget) keeps
-  the item queued and it is sent again, quietly, as soon as it can go; the panel shows no messages. A hold or a
-  preset replaces queued taps. An item that could not go out within 20 s is dropped, and hiding the panel
+  the item queued and it is sent again, quietly, as soon as it can go; the panel shows no messages. A newer
+  height or preset replaces the queued one. An item that could not go out within 20 s is dropped, and hiding the panel
   empties the queue: the desk never moves on its own while nobody looks at the panel.
   The control box ignores stop during a move it runs itself: the handset is the only reliable stop.
 
@@ -51,9 +50,7 @@ $knownRefusals = @('locked', 'not_ready', 'busy', 'too_soon', 'budget', 'motor',
 # Refusals that pass with time, and how many seconds to wait before the next try. Any other result drops the
 # item (locked shows as the red dot; limit, no_preset and here cannot change by waiting).
 $retryAfter = @{ too_soon = 1; busy = 1; not_ready = 3; budget = 3; motor = 3; reverse = 3 }
-$settleMs = 700              # quiet time after the last tap before the summed step goes out
 $queueMaxAgeSeconds = 20     # an item that could not go out for this long is dropped, not done late
-$maxStep = 20                # taps per command (6 cm); more stay queued for the next one
 $inv = [Globalization.CultureInfo]::InvariantCulture
 
 function Write-Log {
@@ -137,23 +134,16 @@ function ConvertFrom-DeskPush {
 }
 
 function Add-DeskPress {
-    # Adds a button press to the queue (at most one queued item). Taps add up: up +1, down -1, so five quick
-    # taps become one move of 1.5 cm, sent after $settleMs of quiet. A hold or a preset replaces whatever is
-    # queued: the last decision wins. Anything else leaves the queue as it was.
+    # Adds a press to the queue (at most one queued item): a height to go to or a preset. The newer one
+    # replaces whatever is queued: the last decision wins. Anything else leaves the queue as it was.
+    # The height is only checked to be a number here; Home Assistant checks it against the desk's range.
     param($Queue, $Message, [datetime]$Now)
     switch ([string]$Message.type) {
-        'tap' {
-            if ($Message.dir -notin 'up', 'down') { return $Queue }
-            $d = if ($Message.dir -eq 'up') { 1 } else { -1 }
-            $notBefore = $Now.AddMilliseconds($settleMs)
-            if ($Queue -and $Queue.kind -eq 'step') {
-                if ($Queue.notBefore -gt $notBefore) { $notBefore = $Queue.notBefore }
-                return @{ kind = 'step'; n = $Queue.n + $d; since = $Queue.since; notBefore = $notBefore }
+        'goto' {
+            $h = 0.0
+            if ([double]::TryParse([string]$Message.h, [Globalization.NumberStyles]::Float, $inv, [ref]$h) -and $h -gt 0 -and $h -lt 1000) {
+                return @{ kind = 'goto'; h = [math]::Round($h, 1); since = $Now; notBefore = $Now }
             }
-            return @{ kind = 'step'; n = $d; since = $Now; notBefore = $notBefore }
-        }
-        'hold' {
-            if ($Message.dir -in 'up', 'down') { return @{ kind = 'hold'; dir = [string]$Message.dir; since = $Now; notBefore = $Now } }
         }
         'preset' {
             $n = 0
@@ -164,35 +154,24 @@ function Add-DeskPress {
 }
 
 function Get-DeskSend {
-    # What goes out now for the queued item: $null (nothing yet), @{ drop = $true } (too old, or taps that
-    # cancelled out) or @{ body; item = what was sent; rest = what stays queued }.
+    # What goes out now for the queued item: $null (nothing yet), @{ drop = $true } (too old) or
+    # @{ body; item = what was sent }.
     param($Queue, [datetime]$Now)
     if ($null -eq $Queue -or $Now -lt $Queue.notBefore) { return $null }
     if (($Now - $Queue.since).TotalSeconds -gt $queueMaxAgeSeconds) { return @{ drop = $true; why = 'too old' } }
     switch ($Queue.kind) {
-        'step' {
-            if ($Queue.n -eq 0) { return @{ drop = $true; why = '' } }
-            $n = [math]::Max(-$maxStep, [math]::Min($maxStep, $Queue.n))
-            $item = $Queue.Clone(); $item.n = $n
-            $rest = $null
-            if ($Queue.n -ne $n) { $rest = $Queue.Clone(); $rest.n = $Queue.n - $n }
-            return @{ body = @{ cmd = 'step'; n = $n }; item = $item; rest = $rest }
-        }
-        'hold' { return @{ body = @{ cmd = "hold_$($Queue.dir)" }; item = $Queue; rest = $null } }
-        'preset' { return @{ body = @{ cmd = 'preset'; n = $Queue.n }; item = $Queue; rest = $null } }
+        'goto' { return @{ body = @{ cmd = 'goto'; h = $Queue.h }; item = $Queue } }
+        'preset' { return @{ body = @{ cmd = 'preset'; n = $Queue.n }; item = $Queue } }
     }
     $null
 }
 
 function Merge-DeskResult {
     # The queue after Home Assistant answered for $Sent. "ok" or a final refusal: the queue stays as it is.
-    # A refusal that passes with time: $Sent goes back - added to newer taps, or replaced by a newer hold or
-    # preset - and the item waits $retryAfter seconds.
+    # A refusal that passes with time: $Sent goes back unless something newer waits, and waits $retryAfter seconds.
     param($Queue, $Sent, [string]$Result, [datetime]$Now)
     if (-not $retryAfter.ContainsKey($Result)) { return $Queue }
-    if ($null -eq $Queue) { $q = $Sent.Clone() }
-    elseif ($Queue.kind -eq 'step' -and $Sent.kind -eq 'step') { $q = $Queue.Clone(); $q.n = $Queue.n + $Sent.n; $q.since = $Sent.since }
-    else { $q = $Queue.Clone() }
+    $q = if ($null -eq $Queue) { $Sent.Clone() } else { $Queue.Clone() }
     $wait = $Now.AddSeconds($retryAfter[$Result])
     if ($q.notBefore -lt $wait) { $q.notBefore = $wait }
     $q
@@ -415,19 +394,23 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
     }
 
     function script:Send-Queue {
-        # Tells the page what is waiting, so the arrow or preset stays lit until it went out.
-        $n = 0; $hold = ''; $preset = 0
+        # Tells the page what is waiting, so the go button or the preset stays lit until it went out.
+        $goto = 0; $preset = 0
         foreach ($i in @($script:Queue, $(if ($script:InFlight) { $script:InFlight.item }))) {
             if ($null -eq $i) { continue }
-            switch ($i.kind) { 'step' { $n += $i.n } 'hold' { $hold = $i.dir } 'preset' { $preset = $i.n } }
+            switch ($i.kind) { 'goto' { $goto = $i.h } 'preset' { $preset = $i.n } }
         }
-        Send-ToPage @{ type = 'queue'; up = ($n -gt 0 -or $hold -eq 'up'); down = ($n -lt 0 -or $hold -eq 'down'); preset = $preset }
+        Send-ToPage @{ type = 'queue'; goto = $goto; preset = $preset }
     }
 
     function script:Complete-InFlight([string]$Result) {
         $sent = $script:InFlight.item
         $script:InFlight = $null
-        if ($Result -ne 'ok' -and -not $retryAfter.ContainsKey($Result)) { Write-Log "command dropped: $($sent.kind) ($Result)" }
+        if ($Result -ne 'ok' -and -not $retryAfter.ContainsKey($Result)) {
+            Write-Log "command dropped: $($sent.kind) ($Result)"
+            # No message, only a short red flash on what was refused (a height out of range, a preset already there).
+            Send-ToPage @{ type = 'refused'; kind = $sent.kind }
+        }
         $script:Queue = Merge-DeskResult $script:Queue $sent $Result ([DateTime]::UtcNow)
         Send-Queue
     }
@@ -540,7 +523,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
 
     function script:Set-FlyoutBounds {
         $scale = [DeskNative]::DpiAtCursor() / 96.0
-        $w = [int](500 * $scale); $h = [int](160 * $scale); $m = [int](12 * $scale)
+        $w = [int](500 * $scale); $h = [int](224 * $scale); $m = [int](12 * $scale)
         $wa = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position).WorkingArea
         $script:Form.Bounds = New-Object System.Drawing.Rectangle(($wa.Right - $w - $m), ($wa.Bottom - $h - $m), $w, $h)
     }
@@ -678,7 +661,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
                 $script:Seq++
                 $s.body.seq = $script:Seq
                 $script:InFlight = @{ seq = $script:Seq; item = $s.item; at = $now }
-                $script:Queue = $s.rest
+                $script:Queue = $null
                 Send-Webhook 'cmd' $s.body
             }
         }
