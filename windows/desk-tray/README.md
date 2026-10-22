@@ -108,12 +108,12 @@ Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC
 
 Everything lives in `%LOCALAPPDATA%\DeskTray\`:
 
-1. Create the folder and copy the four files there:
+1. Create the folder and copy the five files there:
 
    ```powershell
    $dir = Join-Path $env:LOCALAPPDATA 'DeskTray'
    New-Item -ItemType Directory -Force $dir | Out-Null
-   # copy desk-tray.ps1, panel.html, Install-DeskTrayDeps.ps1, Set-DeskTrayFirewall.ps1 into $dir, then:
+   # copy desk-tray.ps1, panel.html, Install-DeskTrayDeps.ps1, Set-DeskTrayFirewall.ps1, autostart.ps1 into $dir, then:
    Get-ChildItem $dir -Filter *.ps1 | Unblock-File
    ```
 
@@ -153,16 +153,12 @@ Everything lives in `%LOCALAPPDATA%\DeskTray\`:
 6. Start it at logon (no admin rights needed; no window, like the meeting reminder):
 
    ```powershell
-   $pwsh = (Get-Command pwsh.exe).Source
-   $action = New-ScheduledTaskAction -Execute 'conhost.exe' `
-     -Argument "--headless `"$pwsh`" -NoProfile -ExecutionPolicy Bypass -File `"$dir\desk-tray.ps1`""
-   $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
-   $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) `
-     -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-   Register-ScheduledTask -TaskName 'desk-tray' -Action $action -Trigger $trigger -Settings $settings `
-     -Description 'Desk panel in the tray (Home Assistant)' -Force
-   Start-ScheduledTask -TaskName 'desk-tray'
+   pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "$dir\autostart.ps1"
    ```
+
+   It registers the scheduled task **desk-tray**, starts it and shows the last lines of the log; the new copy
+   ends the one from step 5 (`replaced older copy PID ...`). Running it again replaces the task.
+   `Unregister-ScheduledTask -TaskName desk-tray` removes it.
 
 ### Stop and upgrade
 
