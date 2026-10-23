@@ -98,7 +98,8 @@ bottom without a way to stop it. The handset stays the only reliable stop.
 - `windows/launcher/` — the starter and updater: both PC apps run from main; every merge that changes
   `windows/` is offered as an update in the panel: [`windows/launcher/README.md`](windows/launcher/README.md).
 - `homeassistant/` — helpers `helpers/desk_panel.yaml`, `rest_command/desk_panel_push.yaml` and the automations
-  `desk_panel_cmd`, `desk_panel_stop`, `desk_panel_push`.
+  `desk_panel_cmd`, `desk_panel_stop`, `desk_panel_push`; with the meeting reminder also `desk_panel_meeting`,
+  which shows the panel (without taking the focus) while the reminder raises the desk.
 
 ## Licenses
 

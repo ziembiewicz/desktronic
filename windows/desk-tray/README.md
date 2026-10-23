@@ -41,6 +41,27 @@ Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC
 - No Home Assistant token on the PC, no third-party agent, no MQTT. The PC only calls two webhooks and listens
   for pushes from Home Assistant's address.
 
+## At a meeting
+
+When the meeting reminder (`../README.md`) nudges or raises the desk, the panel shows by itself so the height
+can be seen while the desk rises. Home Assistant sends it only for a step it accepted
+(`desk_meeting_reminder` fires `desk_meeting_step`, `desk_panel_meeting` pushes it to the PC).
+
+- It shows **without taking the focus**, bottom right on the main screen: what you type keeps going to the
+  window in front (a call, an editor). Keys do nothing in it until you click it.
+- It hides by itself 10 s after the desk stopped; when nothing moved (the desk was already up, or go was
+  refused), 50 s after the last step; never later than 90 s after it.
+- A click in it, or on the tray icon, makes it the normal panel: it takes the keys, hides when it loses the
+  focus and no longer by itself.
+- Hidden by hand (`—`, Esc or the tray icon), it stays away for 90 s, so a second step does not bring it back.
+- A panel you opened yourself is left as it is.
+- Trade-offs: the page (WebView2) is now loaded at start and kept at low memory while hidden (about 165 MB),
+  so the panel can show at once; the panel is on top for up to a minute around the start of a meeting, also
+  while you share your screen; after a warn whose go was refused it stays up to 50 s.
+- The log has one line per step (`meeting go: shown passive in 14 ms`), the window in front after 1 s and 3 s
+  (`fg kept` = the window you worked in; `fg panel` would be a fault) and the end (`meeting: hidden after 31 s,
+  12 height updates`). Never a meeting title.
+
 ## ⚠️ Safety first
 
 - **The handset is the only reliable stop.** The control box stops on a command from Home Assistant only right
@@ -101,7 +122,8 @@ Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC
    `configuration.yaml`. The first `rest_command` needs a Home Assistant restart; later changes need only the
    action `rest_command.reload`.
 4. **Automations** (`../../homeassistant/automations/desk_panel_cmd.yaml`, `desk_panel_stop.yaml`,
-   `desk_panel_push.yaml`): add them to `automations.yaml`, each webhook with its own random ID
+   `desk_panel_push.yaml`, and `desk_panel_meeting.yaml` with the meeting reminder): add them to
+   `automations.yaml`, each webhook with its own random ID
    (`openssl rand -hex 16`). In all files replace `biurko_xxxxxx` with your desk's entity prefix.
 
 ## Install — PC
@@ -190,7 +212,7 @@ a fresh boot; outside dry run `test` is ignored. Clear **Desk panel moves** befo
 - Tests (pure functions), from this folder, in `pwsh` with Pester 4.10.1 (`Install-Module Pester -RequiredVersion 4.10.1 -Scope CurrentUser` once):
   `Import-Module Pester -RequiredVersion 4.10.1 -Force; Invoke-Pester .\tests`
 - Log: `Get-Content "$env:LOCALAPPDATA\DeskTray\desk-tray.log" -Tail 20` — start, panel open times, dropped
-  commands and errors. It never holds the webhook URLs, the token or the pushed data.
+  commands, meeting steps and errors. It never holds the webhook URLs, the token or the pushed data.
 - No height on the panel: is the task running, does the log show `listener=True`, is the PC's address in
   `desk_panel_push_url` current, and did Home Assistant get a hello (helper **Desk panel last hello**)?
 
