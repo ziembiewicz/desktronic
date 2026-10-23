@@ -172,7 +172,7 @@ if (wv) wv.addEventListener("message", e => {
     g.classList.toggle("busy", !!m.busy);
     g.title = m.tag ? "Aktualizacja: " + m.tag : "Ustawienia (jeszcze nie ma)";
   } else if (m.type === "version") {
-    // The release the starter runs ("pc-v1.0.2" shows as "v1.0.2"); "manual" outside the starter.
+    // The release the starter runs ("v14"; an old "pc-v1.0.2" shows as "v1.0.2"); "manual" outside the starter.
     $("ver").textContent = String(m.v || "").replace(/^pc-/, "");
   } else if (m.type === "refused") {
     // A height out of range or a preset the desk is already at: a short red flash, no text.

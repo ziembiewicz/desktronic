@@ -1,32 +1,30 @@
 <#
 .SYNOPSIS
-  Moves the desk panel and the meeting reminder onto the starter and signed releases. Run once, by hand.
+  Moves the desk panel and the meeting reminder onto the starter and releases from main. Run once, by hand.
 
 .DESCRIPTION
   After this, a new release is installed from the panel (dot on the tray icon, then Yes); no files are copied
   by hand any more. What it does:
     1. checks Git for Windows and PowerShell 7.4;
-    2. creates %LOCALAPPDATA%\DeskApps\: the starter (this folder's .ps1/.psm1 files), allowed_signers built
-       from your SSH public key, and a clone of the GitHub mirror;
-    3. finds the newest pc-vX.Y.Z tag signed by that key (stops if there is none);
+    2. creates %LOCALAPPDATA%\DeskApps\: the starter (this folder's .ps1/.psm1 files) and a clone of the
+       GitHub mirror;
+    3. finds the release on main (v<N>, see Update-DeskApps.ps1);
     4. stops both apps, installs the panel libraries into %LOCALAPPDATA%\DeskTray (lib\deps.json),
        creates the release worktree and makes it current;
     5. moves the old hand-copied scripts into pre-launcher\ (config.json, logs and lib\ stay where they are);
     6. points the scheduled tasks "desk-tray" and "meeting-reminder" at the starter and starts them.
-  Run it from your own clone of the repository (Forgejo), where this file was reviewed, not from a download:
-  it decides which key the PC trusts.
-  Running it again is safe: with a release already installed and nothing newer, it refreshes the starter files,
-  allowed_signers and the scheduled tasks and leaves the apps and their release alone.
+  Run it from your own clone of the repository (Forgejo), not from a download.
+  Running it again is safe: with a release already installed it refreshes the starter files and the scheduled
+  tasks and leaves the apps and their release alone; a newer release then comes through the dot.
+  It removes allowed_signers, left by the signed-tag starter (launcher 1).
 
 .NOTES
   PowerShell 7.4 or newer, your normal account (no admin rights):
-    pwsh.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\launcher\Install-DeskApps.ps1 -PublicKey "$HOME\.ssh\id_ed25519.pub"
+    pwsh.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\launcher\Install-DeskApps.ps1
   -HaApi: the "api" the Home Assistant side already pushes (1 once desk_panel_push carries it).
 #>
 #Requires -Version 7.4
 param(
-    [Parameter(Mandatory)][string]$PublicKey,
-    [string]$Principal = 'tomek',
     [string]$Root = (Join-Path $env:LOCALAPPDATA 'DeskApps'),
     [int]$HaApi = 1
 )
@@ -38,18 +36,14 @@ function Step([string]$Text) { Write-Host "-- $Text" }
 Step 'Git for Windows'
 $g = Get-DeskGit
 $ver = (& $g.git --version) -replace '^git version ([0-9]+\.[0-9]+).*$', '$1'
-if ([version]$ver -lt [version]'2.34') { throw "Git $ver is too old for SSH signatures (2.34+): winget upgrade --id Git.Git" }
+if ([version]$ver -lt [version]'2.34') { throw "Git $ver is too old (2.34+): winget upgrade --id Git.Git" }
 
 Step "folder $Root"
 $launcher = Join-Path $Root 'launcher'
 $null = New-Item -ItemType Directory -Force -Path $launcher, (Join-Path $Root 'releases')
 foreach ($f in 'DeskApps.psm1', 'Start-DeskApp.ps1', 'Update-DeskApps.ps1') { Copy-Item -Force (Join-Path $PSScriptRoot $f) $launcher }
 
-Step 'allowed_signers'
-$key = (Get-Content -Raw -Path $PublicKey).Trim()
-if ($key -notmatch '^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp\d+|sk-ssh-ed25519@openssh\.com) [A-Za-z0-9+/=]+') { throw "$PublicKey does not look like an SSH public key" }
-$parts = $key -split ' '
-Set-Content -Path (Join-Path $Root 'allowed_signers') -Encoding ascii -Value "$Principal namespaces=`"git`" $($parts[0]) $($parts[1])"
+Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $Root 'allowed_signers')
 
 Step 'clone of the GitHub mirror'
 $repo = Join-Path $Root 'repo'
@@ -62,13 +56,13 @@ if (-not (Test-Path (Join-Path $repo '.git'))) {
 
 $worker = Join-Path $launcher 'Update-DeskApps.ps1'
 $pwsh = (Get-Process -Id $PID).Path
-Step 'newest signed release'
+Step 'release on main'
 & $pwsh -NoProfile -File $worker -Mode Check -Root $Root
 $check = Get-Content -Raw (Join-Path $Root 'update-check.json') | ConvertFrom-Json
 $installed = (Invoke-DeskStateLocked $Root { param($s) $null }).apps['desk-tray'].current
-$rerun = $check.status -eq 'none' -and $installed -and (Test-Path (Join-Path (Join-Path $Root 'releases') $installed))
-if ($rerun) { Write-Host "   $installed is installed and nothing newer is signed: keeping it" }
-elseif ($check.status -ne 'available') { throw "no signed release found ($($check.status) $($check.reason)); see $Root\update.log" }
+$rerun = $installed -and (Test-Path (Join-Path (Join-Path $Root 'releases') $installed))
+if ($rerun) { Write-Host "   $installed is installed: keeping it$(if ($check.status -eq 'available') { "; $($check.tag) comes through the dot" })" }
+elseif ($check.status -ne 'available') { throw "no release found ($($check.status) $($check.reason)); see $Root\update.log" }
 else { Write-Host "   $($check.tag) ($($check.commit.Substring(0, 12)))" }
 
 $deskData = Join-Path $env:LOCALAPPDATA 'DeskTray'
@@ -85,7 +79,7 @@ if (-not $rerun) {
     if ($LASTEXITCODE -ne 0) { throw 'Install-DeskTrayDeps.ps1 failed' }
 
     Step "release $($check.tag)"
-    & $pwsh -NoProfile -File $worker -Mode Prepare -Root $Root -Tag $check.tag -TagObject $check.tagObject -Commit $check.commit -HaApi $HaApi -Initial
+    & $pwsh -NoProfile -File $worker -Mode Prepare -Root $Root -Tag $check.tag -Commit $check.commit -HaApi $HaApi -Initial
     $prep = Get-Content -Raw (Join-Path $Root 'update-prepare.json') | ConvertFrom-Json
     if ($prep.status -ne 'ready') { throw "release not prepared: $($prep.reason)" }
 }

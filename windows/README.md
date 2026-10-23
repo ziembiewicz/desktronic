@@ -32,8 +32,8 @@ reads them.
 
 ## Install
 
-> **Updates from signed releases.** `windows/launcher/Install-DeskApps.ps1` ([`launcher/README.md`](launcher/README.md))
-> moves this script and the desk panel onto a starter that installs signed releases from the panel. The script
+> **Updates from main.** `windows/launcher/Install-DeskApps.ps1` ([`launcher/README.md`](launcher/README.md))
+> moves this script and the desk panel onto a starter that installs new releases from main through the panel. The script
 > then runs from the release with `-DataDir %LOCALAPPDATA%\meeting-reminder` (config.json and the log stay
 > there) and writes `queue.json`, so an update restarts it only when no meeting waits.
 

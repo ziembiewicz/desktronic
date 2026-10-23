@@ -106,9 +106,9 @@ Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC
 
 ## Install — PC
 
-> **Updates from signed releases.** After the first install below, run `windows/launcher/Install-DeskApps.ps1`
+> **Updates from main.** After the first install below, run `windows/launcher/Install-DeskApps.ps1`
 > once ([`windows/launcher/README.md`](../launcher/README.md)): the panel and the meeting reminder then run from
-> signed releases through a starter, and a new release is installed from the tray (dot, then Yes). Steps 5–6
+> main through a starter, and a new release is installed from the tray (dot, then Yes). Steps 5–6
 > below are then done by the starter; `autostart.ps1` refuses to re-point the task.
 
 Everything lives in `%LOCALAPPDATA%\DeskTray\`:

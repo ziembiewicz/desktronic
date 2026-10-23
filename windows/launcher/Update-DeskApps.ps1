@@ -1,20 +1,21 @@
 <#
 .SYNOPSIS
-  Update worker for the desk apps: finds a newer signed release, or prepares one. Started by the panel in the
+  Update worker for the desk apps: finds a newer release on main, or prepares one. Started by the panel in the
   background (no window) and by Install-DeskApps.ps1; writes its result as JSON and exits.
 
 .DESCRIPTION
+  A release is a commit on main of the GitHub mirror, named v<N>: N counts the commits on main's first-parent
+  line that changed windows/, so every merged pull request that touches the PC apps is the next release and a
+  merge that only changes Home Assistant files is not. Main only changes through pull requests the owner merges.
   -Mode Check
-    git fetch of the pc-v* tags from the GitHub mirror (forced: a tag the owner re-created replaces the old one;
-    that is safe because nothing is trusted by name, see Prepare). The newest pc-vX.Y.Z above what runs and not
-    marked failed must be an annotated tag whose own name matches, signed by a key in allowed_signers
-    (git verify-tag), and its manifest (windows/pc-manifest.json, read with git show, nothing written) must carry
-    the same version. Result in update-check.json: status none | available | error, tag, tagObject, commit.
-  -Mode Prepare -Tag -TagObject -Commit [-HaApi n]
-    Runs after the owner said yes, maybe hours after Check: verifies the signature again and that the tag still
-    is the same object pointing to the same commit, then checks the requirements of the release against this
-    PC (nothing is written before that), creates the worktree releases\<tag> from the commit id (not the name)
-    and marks the tag pending for both apps. -Initial (Install-DeskApps.ps1) makes it current instead.
+    git fetch of main; when its v<N> is above what runs and not marked failed, and its manifest
+    (windows/pc-manifest.json, read with git show, nothing written) is valid: available.
+    Result in update-check.json: status none | available | error, tag (the release name, v<N>), commit.
+  -Mode Prepare -Tag v<N> -Commit <id> [-HaApi n]
+    Runs after the owner said yes, maybe hours after Check: the commit must still count as v<N>; then checks the
+    requirements of the release against this PC (nothing is written before that), creates the worktree
+    releases\v<N> from the commit id and marks it pending for both apps. -Initial (Install-DeskApps.ps1) makes it
+    current instead. -TagObject is accepted and ignored (panels from before v14 pass it).
     Result in update-prepare.json: status ready | refused | error, reason.
   Never logs URLs from config.json, tokens or meeting data.
 #>
@@ -42,17 +43,10 @@ function Write-Log([string]$Message) {
     try { Add-Content -Path $logPath -Encoding UTF8 -Value ('{0:yyyy-MM-dd HH:mm:ss} {1} {2}' -f (Get-Date), $Mode.ToLowerInvariant(), $Message) } catch { }
 }
 
-function Get-VerifiedTag([string]$Name) {
-    # Returns @{ tagObject; commit } for a signed annotated tag whose header names itself, or throws why not.
-    $obj = Invoke-DeskGit $Root @('rev-parse', '--verify', '--quiet', "refs/tags/$Name")
-    if ($obj.code -ne 0) { throw "tag $Name not found" }
-    $type = Invoke-DeskGit $Root @('cat-file', '-t', $obj.out[0])
-    if ($type.out[0] -ne 'tag') { throw "$Name is not an annotated tag" }
-    $head = Get-DeskTagHeader (Invoke-DeskGit $Root @('cat-file', '-p', $obj.out[0])).out
-    if ($head.tag -cne $Name -or $head.type -ne 'commit' -or $head.object -notmatch '^[0-9a-f]{40}$') { throw "tag ${Name}: header does not match (tag '$($head.tag)', type '$($head.type)')" }
-    $v = Invoke-DeskGit $Root @('verify-tag', $obj.out[0])
-    if ($v.code -ne 0) { throw "tag ${Name}: signature not valid for allowed_signers" }
-    @{ tagObject = $obj.out[0]; commit = $head.object }
+function Get-ReleaseName([string]$CommitId) {
+    $n = Invoke-DeskGit $Root @('rev-list', '--count', '--first-parent', $CommitId, '--', 'windows/')
+    if ($n.code -ne 0) { throw "commit $CommitId not found" }
+    "v$($n.out[0])"
 }
 
 function Get-Manifest([string]$CommitId) {
@@ -65,41 +59,30 @@ $resultPath = Join-Path $Root $(if ($Mode -eq 'Check') { 'update-check.json' } e
 $result = [ordered]@{ status = 'error'; at = (Get-Date).ToString('o') }
 try {
     if ($Mode -eq 'Check') {
-        $f = Invoke-DeskGit $Root @('fetch', '--prune', '--no-tags', 'origin', '+refs/tags/pc-v*:refs/tags/pc-v*')
+        $f = Invoke-DeskGit $Root @('fetch', '--prune', '--no-tags', 'origin', '+refs/heads/main:refs/remotes/origin/main')
         if ($f.code -ne 0) { throw "git fetch failed (exit $($f.code))" }
+        $commit = (Invoke-DeskGit $Root @('rev-parse', '--verify', 'refs/remotes/origin/main^{commit}')).out[0]
+        $name = Get-ReleaseName $commit
         $state = Invoke-DeskStateLocked $Root { param($s) $null }
-        $failed = @($state.apps.Values | ForEach-Object { $_.failed }) | Select-Object -Unique
+        $failed = @($state.apps.Values | ForEach-Object { $_.failed })
         # Offer what is newer than the oldest app: both apps move to the same release.
-        $currents = @($state.apps.Values | ForEach-Object { $_.current } | Where-Object { $_ })
-        $floor = $currents | Sort-Object { ConvertTo-DeskVersion $_ } | Select-Object -First 1
-        $tags = (Invoke-DeskGit $Root @('tag', '-l', 'pc-v*')).out
+        $floor = @($state.apps.Values | ForEach-Object { ConvertTo-DeskVersion $_.current } | Sort-Object)[0]
         $result.status = 'none'
-        $skipped = @()
-        while ($true) {
-            $newest = Select-DeskNewestTag -Tags $tags -Than $floor -Exclude (@($failed) + $skipped)
-            if (-not $newest) { break }
-            try {
-                $t = Get-VerifiedTag $newest
-                $man = Get-Manifest $t.commit
-                $why = Test-DeskManifest $man $newest
-                if ($why) { throw $why }
-                $result.status = 'available'; $result.tag = $newest; $result.tagObject = $t.tagObject; $result.commit = $t.commit
-                break
-            }
-            catch {
-                # A bad newest tag must not hide a good older one.
-                Write-Log "skipped $newest`: $($_.Exception.Message)"
-                $skipped += $newest
+        if ((ConvertTo-DeskVersion $name) -gt $floor) {
+            if ($name -in $failed) { Write-Log "$name failed its trial before; waiting for the next merge" }
+            else {
+                $why = Test-DeskManifest (Get-Manifest $commit)
+                if ($why) { throw "${name}: $why" }
+                $result.status = 'available'; $result.tag = $name; $result.commit = $commit
             }
         }
         Write-Log "status $($result.status)$(if ($result.tag) { ' ' + $result.tag })"
     }
     else {
-        if (-not ($Tag -and $TagObject -and $Commit)) { throw '-Tag, -TagObject and -Commit are required' }
-        $t = Get-VerifiedTag $Tag
-        if ($t.tagObject -ne $TagObject -or $t.commit -ne $Commit) { throw "tag $Tag changed since it was checked; check again" }
+        if (-not ($Tag -and $Commit -match '^[0-9a-f]{40}$')) { throw '-Tag and -Commit are required' }
+        if ((Get-ReleaseName $Commit) -cne $Tag) { throw "commit $($Commit.Substring(0, 12)) is not $Tag; check again" }
         $man = Get-Manifest $Commit
-        $why = Test-DeskManifest $man $Tag
+        $why = Test-DeskManifest $man
         if ($why) { throw $why }
         $config = @{}
         foreach ($app in Get-DeskAppNames) {
@@ -134,7 +117,6 @@ try {
                     if ($Initial) { $a.current = $Tag; $a.previous = $null; $a.pending = $null; $a.trial = $null }
                     elseif ($a.current -ne $Tag) { $a.pending = $Tag }
                 }
-                $s.verified = @{ tag = $Tag; tagObject = $TagObject; commit = $Commit }
                 $s
             }
             # Old worktrees go; what runs, ran before or waits stays.

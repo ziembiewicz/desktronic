@@ -35,7 +35,7 @@
   The log never contains the webhook URLs, the token or pushed data; only start/stop, panel open times,
   dropped commands, update steps and errors.
   Updates: started by the starter (windows/launcher/Start-DeskApp.ps1) with -DeskAppsRoot, the panel looks for a
-  newer signed release (Update-DeskApps.ps1 -Mode Check, in the background) a minute after start and every 6 h.
+  newer release on main (Update-DeskApps.ps1 -Mode Check, in the background) a minute after start and every 6 h.
   A newer one puts a dot on the tray icon and the gear; the question comes only when the owner clicks it
   ("Update to ..." in the tray menu, or the gear), with No as the default. Yes prepares the release in the
   background, waits until nothing is sent to the desk and ends with exit code 3: the starter starts the new one.
@@ -490,7 +490,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
         finally { $script:Upd.asking = $false }
         if ($ans -ne 'Yes') { Write-Log "update: $($o.tag) declined"; return }
         Write-Log "update: preparing $($o.tag)"
-        Start-UpdateWorker 'Prepare' @('-Tag', $o.tag, '-TagObject', $o.tagObject, '-Commit', $o.commit, '-HaApi', [string]$script:HaApi)
+        Start-UpdateWorker 'Prepare' @('-Tag', $o.tag, '-Commit', $o.commit, '-HaApi', [string]$script:HaApi)
         Set-UpdateBadge
     }
 
@@ -505,7 +505,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
             if ($script:Upd.mode -eq 'Check') {
                 if ($r -and $r.status -eq 'available' -and $r.tag) {
                     if (-not $script:Upd.offer -or $script:Upd.offer.tag -ne $r.tag) { Write-Log "update: $($r.tag) available" }
-                    $script:Upd.offer = @{ tag = [string]$r.tag; tagObject = [string]$r.tagObject; commit = [string]$r.commit }
+                    $script:Upd.offer = @{ tag = [string]$r.tag; commit = [string]$r.commit }
                 }
                 elseif ($r -and $r.status -eq 'none') { $script:Upd.offer = $null }
                 else { Write-Log "update check failed: $(if ($r) { $r.reason } else { 'no result' })" }

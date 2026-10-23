@@ -3,9 +3,8 @@
   %LOCALAPPDATA%\DeskApps\launcher\ and is updated by hand only, never by the updater it serves.
 
   Layout of the DeskApps folder (-Root):
-    repo\               git clone of the GitHub mirror; tags pc-vX.Y.Z signed with the owner's SSH key
-    releases\<tag>\     git worktree of a verified tag; the apps run from here
-    allowed_signers     the owner's public key (installed by hand; the updater never writes it)
+    repo\               git clone of the GitHub mirror; a release is a commit on main
+    releases\v<N>\      git worktree of that commit; the apps run from here
     state.json          per app: current, previous, pending, trial, failed (written under a mutex, atomically)
     update-check.json   last result of Update-DeskApps.ps1 -Mode Check
     launcher\           this module, Start-DeskApp.ps1, Update-DeskApps.ps1
@@ -13,8 +12,8 @@
 #>
 
 # Raised by hand when the starter, this module or the worker change in a way a release depends on.
-$script:LauncherVersion = 1
-$script:TagPattern = '^pc-v(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})$'
+$script:LauncherVersion = 2
+$script:ReleasePattern = '^v([1-9]\d{0,5})$'
 $script:AppNames = @('desk-tray', 'meeting-reminder')
 $script:RemoteUrl = 'https://github.com/ziembiewicz/desktronic.git'
 
@@ -25,36 +24,11 @@ function Get-DeskRemoteUrl { $script:RemoteUrl }
 # ------------------------------------------------------------------ versions (pure)
 
 function ConvertTo-DeskVersion {
-    # 'pc-v1.2.3' -> [version]1.2.3; anything else (suffixes, leading zeros, other tags) -> $null.
-    param([string]$Tag)
-    if ($Tag -cmatch $script:TagPattern) { return [version]::new([int]$Matches[1], [int]$Matches[2], [int]$Matches[3]) }
-    $null
-}
-
-function Select-DeskNewestTag {
-    # The highest pc-vX.Y.Z tag that is newer than $Than (a tag or $null) and not in $Exclude.
-    param([string[]]$Tags, [string]$Than, [string[]]$Exclude = @())
-    $floor = if ($Than) { ConvertTo-DeskVersion $Than } else { $null }
-    $best = $null; $bestV = $null
-    foreach ($t in $Tags) {
-        $v = ConvertTo-DeskVersion $t
-        if ($null -eq $v -or $t -in $Exclude) { continue }
-        if ($floor -and $v -le $floor) { continue }
-        if ($null -eq $bestV -or $v -gt $bestV) { $best = $t; $bestV = $v }
-    }
-    $best
-}
-
-function Get-DeskTagHeader {
-    # Parses the header of a git tag object (git cat-file -p): object, type, tag. Lines after the first blank line
-    # are the message and are ignored, so a message cannot fake a header line.
-    param([string[]]$Lines)
-    $h = @{}
-    foreach ($l in $Lines) {
-        if ($l -eq '') { break }
-        if ($l -cmatch '^(object|type|tag|tagger) (.+)$') { if (-not $h.ContainsKey($Matches[1])) { $h[$Matches[1]] = $Matches[2] } }
-    }
-    $h
+    # Release name 'v14' -> 14: the number of commits on main's first-parent line that changed windows/, so it
+    # grows by itself with every merge that touches the PC apps. Anything else (old pc-vX.Y.Z releases) -> 0.
+    param([string]$Name)
+    if ($Name -cmatch $script:ReleasePattern) { return [int]$Matches[1] }
+    0
 }
 
 # ------------------------------------------------------------------ manifest and requirements (pure)
@@ -62,11 +36,10 @@ function Get-DeskTagHeader {
 function Test-DeskManifest {
     # windows/pc-manifest.json of a release. Returns $null when valid, otherwise the reason. Unknown keys are
     # refused: an older updater must not silently skip a requirement it does not know.
-    param($Manifest, [string]$Tag)
+    param($Manifest)
     if ($null -eq $Manifest -or $Manifest -isnot [pscustomobject]) { return 'manifest is not a JSON object' }
     $top = @($Manifest.PSObject.Properties.Name)
-    foreach ($k in $top) { if ($k -notin 'version', 'requires') { return "manifest: unknown key '$k'" } }
-    if ([string]$Manifest.version -cne $Tag) { return "manifest version '$($Manifest.version)' is not the tag $Tag" }
+    foreach ($k in $top) { if ($k -ne 'requires') { return "manifest: unknown key '$k'" } }
     $r = $Manifest.requires
     if ($null -eq $r -or $r -isnot [pscustomobject]) { return 'manifest: requires missing' }
     foreach ($k in @($r.PSObject.Properties.Name)) {
@@ -107,7 +80,7 @@ function New-DeskAppState { @{ current = $null; previous = $null; pending = $nul
 function ConvertTo-DeskState {
     # state.json -> hashtable with one entry per known app; missing or broken parts start empty.
     param([string]$Json)
-    $s = @{ apps = @{}; verified = $null }
+    $s = @{ apps = @{} }
     $p = $null
     if ($Json) { try { $p = $Json | ConvertFrom-Json } catch { $p = $null } }
     foreach ($app in $script:AppNames) {
@@ -120,7 +93,6 @@ function ConvertTo-DeskState {
         }
         $s.apps[$app] = $a
     }
-    if ($p -and $p.verified) { $s.verified = @{ tag = [string]$p.verified.tag; tagObject = [string]$p.verified.tagObject; commit = [string]$p.verified.commit } }
     $s
 }
 
@@ -213,26 +185,20 @@ function Invoke-DeskStateLocked {
 # ------------------------------------------------------------------ git
 
 function Get-DeskGit {
-    # Git for Windows by absolute path (never whatever is first in PATH), and the ssh-keygen that ships with it
-    # (Windows' own OpenSSH may be too old for "ssh-keygen -Y"). On Linux (tests) git and ssh-keygen from PATH.
+    # Git for Windows by absolute path (never whatever is first in PATH). On Linux (tests) git from PATH.
     if ($IsWindows) {
-        $base = Join-Path $env:ProgramFiles 'Git'
-        $git = Join-Path $base 'cmd\git.exe'
-        $keygen = Join-Path $base 'usr\bin\ssh-keygen.exe'
-        if (-not (Test-Path $git) -or -not (Test-Path $keygen)) { throw "Git for Windows not found in $base (winget install --id Git.Git)" }
-        return @{ git = $git; keygen = $keygen }
+        $git = Join-Path $env:ProgramFiles 'Git\cmd\git.exe'
+        if (-not (Test-Path $git)) { throw "Git for Windows not found: $git (winget install --id Git.Git)" }
+        return @{ git = $git }
     }
-    @{ git = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
-       keygen = (Get-Command ssh-keygen -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source }
+    @{ git = (Get-Command git -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source }
 }
 
 function Invoke-DeskGit {
     # Runs git in the clone without prompts or credential helpers. Returns @{ code; out (lines) }.
     param([string]$Root, [string[]]$Arguments, [int]$TimeoutSeconds = 120)
     $g = Get-DeskGit
-    $signers = Join-Path $Root 'allowed_signers'
-    $all = @('-C', (Join-Path $Root 'repo'), '-c', 'credential.helper=', '-c', 'core.askPass=', '-c', 'gpg.format=ssh',
-             '-c', "gpg.ssh.allowedSignersFile=$signers", '-c', "gpg.ssh.program=$($g.keygen)") + $Arguments
+    $all = @('-C', (Join-Path $Root 'repo'), '-c', 'credential.helper=', '-c', 'core.askPass=') + $Arguments
     $psi = [Diagnostics.ProcessStartInfo]::new($g.git)
     foreach ($a in $all) { $psi.ArgumentList.Add($a) }
     $psi.RedirectStandardOutput = $true
