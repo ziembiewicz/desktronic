@@ -88,9 +88,13 @@ For each release, after the pull request that raises `windows/pc-manifest.json` 
 
 ```bash
 git fetch origin
+git show origin/main:windows/pc-manifest.json   # "version" must be pc-vX.Y.Z
 git tag -s pc-vX.Y.Z origin/main -m pc-vX.Y.Z
 git push origin pc-vX.Y.Z
 ```
+
+If `git fetch` fails, stop: `origin/main` is then the old commit, the PC skips the tag (`skipped pc-vX.Y.Z` in
+`update.log`) and the tag has to be deleted (`git tag -d`, `git push origin :refs/tags/pc-vX.Y.Z`) and signed again.
 
 The mirror carries the tag to GitHub; the PC sees it at the next check (a minute after the panel starts,
 then every 6 hours). Never move or re-use a published tag name for other content; publish a new version instead.

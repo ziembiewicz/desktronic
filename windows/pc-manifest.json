@@ -1,5 +1,5 @@
 {
-  "version": "pc-v1.0.1",
+  "version": "pc-v1.0.2",
   "requires": {
     "launcher": 1,
     "pwsh": "7.4",

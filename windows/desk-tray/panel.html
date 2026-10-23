@@ -26,6 +26,7 @@ html,body{margin:0;height:100%;overflow:hidden;background:#202227;color:#e8eaee;
 #st{font-size:13px;color:#b9c0cb}
 .ib{width:28px;height:24px;border-radius:5px;display:flex;align-items:center;justify-content:center;color:#a8aeb8;font-size:14px}
 .ib:hover{background:rgba(255,255,255,.07)}
+#ver{font-size:13px;color:#b9c0cb;padding-right:4px}
 #gear{opacity:.35;position:relative}
 #gear.upd{opacity:1;color:#ffb020;cursor:pointer}
 #gear.upd::after{content:"";position:absolute;top:2px;right:3px;width:7px;height:7px;border-radius:50%;background:#ffb020;box-shadow:0 0 6px #ffb020}
@@ -77,7 +78,7 @@ button{border:0;background:transparent;cursor:pointer;border-radius:8px;touch-ac
 </head>
 <body><div id="p">
 <div class="hdr"><div class="hl"><div class="ttl">Biurko</div><div id="st">łączenie&hellip;</div></div>
- <div class="hl" style="gap:4px"><div class="ib" id="gear" title="Ustawienia (jeszcze nie ma)">&#9881;</div><div class="ib" id="hide" title="Ukryj">&#8212;</div></div></div>
+ <div class="hl" style="gap:4px"><div id="ver" title="Wersja panelu"></div><div class="ib" id="gear" title="Ustawienia (jeszcze nie ma)">&#9881;</div><div class="ib" id="hide" title="Ukryj">&#8212;</div></div></div>
 <div class="lcd"><div class="gl"></div>
  <div><div class="hv"><div id="h" class="stale">--.-</div><div class="cm">cm</div></div>
   <div class="leds"><i id="lg" title="OK"></i><i id="ly" title="W ruchu albo polecenie czeka"></i><i id="lr" title="Blokada albo brak połączenia z HA"></i></div></div>
@@ -170,6 +171,9 @@ if (wv) wv.addEventListener("message", e => {
     g.classList.toggle("upd", !!m.tag);
     g.classList.toggle("busy", !!m.busy);
     g.title = m.tag ? "Aktualizacja: " + m.tag : "Ustawienia (jeszcze nie ma)";
+  } else if (m.type === "version") {
+    // The release the starter runs ("pc-v1.0.2" shows as "v1.0.2"); "manual" outside the starter.
+    $("ver").textContent = String(m.v || "").replace(/^pc-/, "");
   } else if (m.type === "refused") {
     // A height out of range or a preset the desk is already at: a short red flash, no text.
     if (m.kind === "goto") flash($("tv"), "bad", 600);
