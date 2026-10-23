@@ -15,6 +15,8 @@
     6. points the scheduled tasks "desk-tray" and "meeting-reminder" at the starter and starts them.
   Run it from your own clone of the repository (Forgejo), where this file was reviewed, not from a download:
   it decides which key the PC trusts.
+  Running it again is safe: with a release already installed and nothing newer, it refreshes the starter files,
+  allowed_signers and the scheduled tasks and leaves the apps and their release alone.
 
 .NOTES
   PowerShell 7.4 or newer, your normal account (no admin rights):
@@ -63,25 +65,30 @@ $pwsh = (Get-Process -Id $PID).Path
 Step 'newest signed release'
 & $pwsh -NoProfile -File $worker -Mode Check -Root $Root
 $check = Get-Content -Raw (Join-Path $Root 'update-check.json') | ConvertFrom-Json
-if ($check.status -ne 'available') { throw "no signed release found ($($check.status) $($check.reason)); see $Root\update.log" }
-Write-Host "   $($check.tag) ($($check.commit.Substring(0, 12)))"
+$installed = (Invoke-DeskStateLocked $Root { param($s) $null }).apps['desk-tray'].current
+$rerun = $check.status -eq 'none' -and $installed -and (Test-Path (Join-Path (Join-Path $Root 'releases') $installed))
+if ($rerun) { Write-Host "   $installed is installed and nothing newer is signed: keeping it" }
+elseif ($check.status -ne 'available') { throw "no signed release found ($($check.status) $($check.reason)); see $Root\update.log" }
+else { Write-Host "   $($check.tag) ($($check.commit.Substring(0, 12)))" }
 
-Step 'stopping both apps'
-foreach ($t in 'desk-tray', 'meeting-reminder') { Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue }
-Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" |
-    Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match 'desk-tray\.ps1|meeting-reminder\.ps1|Start-DeskApp\.ps1' } |
-    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-Start-Sleep -Seconds 2
-
-Step 'panel libraries (lib\deps.json)'
 $deskData = Join-Path $env:LOCALAPPDATA 'DeskTray'
-& $pwsh -NoProfile -File (Join-Path $PSScriptRoot '..\desk-tray\Install-DeskTrayDeps.ps1') -Root $deskData
-if ($LASTEXITCODE -ne 0) { throw 'Install-DeskTrayDeps.ps1 failed' }
+if (-not $rerun) {
+    Step 'stopping both apps'
+    foreach ($t in 'desk-tray', 'meeting-reminder') { Stop-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue }
+    Get-CimInstance Win32_Process -Filter "Name='pwsh.exe' OR Name='powershell.exe'" |
+        Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match 'desk-tray\.ps1|meeting-reminder\.ps1|Start-DeskApp\.ps1' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Seconds 2
 
-Step "release $($check.tag)"
-& $pwsh -NoProfile -File $worker -Mode Prepare -Root $Root -Tag $check.tag -TagObject $check.tagObject -Commit $check.commit -HaApi $HaApi -Initial
-$prep = Get-Content -Raw (Join-Path $Root 'update-prepare.json') | ConvertFrom-Json
-if ($prep.status -ne 'ready') { throw "release not prepared: $($prep.reason)" }
+    Step 'panel libraries (lib\deps.json)'
+    & $pwsh -NoProfile -File (Join-Path $PSScriptRoot '..\desk-tray\Install-DeskTrayDeps.ps1') -Root $deskData
+    if ($LASTEXITCODE -ne 0) { throw 'Install-DeskTrayDeps.ps1 failed' }
+
+    Step "release $($check.tag)"
+    & $pwsh -NoProfile -File $worker -Mode Prepare -Root $Root -Tag $check.tag -TagObject $check.tagObject -Commit $check.commit -HaApi $HaApi -Initial
+    $prep = Get-Content -Raw (Join-Path $Root 'update-prepare.json') | ConvertFrom-Json
+    if ($prep.status -ne 'ready') { throw "release not prepared: $($prep.reason)" }
+}
 
 Step 'old hand-copied scripts -> pre-launcher\'
 $old = @{
@@ -106,8 +113,10 @@ foreach ($app in 'desk-tray', 'meeting-reminder') {
     $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     $null = Register-ScheduledTask -TaskName $app -Action $action -Trigger $trigger -Settings $settings `
         -Description "Desk app $app through the starter (DeskApps)" -Force
-    Start-ScheduledTask -TaskName $app
+    # A task that already runs keeps its starter (the new definition counts from the next logon).
+    if ((Get-ScheduledTask -TaskName $app).State -ne 'Running') { Start-ScheduledTask -TaskName $app }
 }
 Start-Sleep -Seconds 10
 Get-Content (Join-Path $Root 'launcher.log') -Tail 4
-Write-Host "Done: both apps run $($check.tag). Next releases come through the dot on the tray icon."
+$now = (Invoke-DeskStateLocked $Root { param($s) $null }).apps['desk-tray'].current
+Write-Host "Done: both apps run $now. Next releases come through the dot on the tray icon."
