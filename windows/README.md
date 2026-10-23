@@ -32,6 +32,11 @@ reads them.
 
 ## Install
 
+> **Updates from signed releases.** `windows/launcher/Install-DeskApps.ps1` ([`launcher/README.md`](launcher/README.md))
+> moves this script and the desk panel onto a starter that installs signed releases from the panel. The script
+> then runs from the release with `-DataDir %LOCALAPPDATA%\meeting-reminder` (config.json and the log stay
+> there) and writes `queue.json`, so an update restarts it only when no meeting waits.
+
 Everything lives in one folder, `%LOCALAPPDATA%\meeting-reminder\`:
 
 1. Copy `meeting-reminder.ps1` there. If Windows blocks it as downloaded, run `Unblock-File` on it.

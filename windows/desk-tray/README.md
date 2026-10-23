@@ -106,6 +106,11 @@ Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC
 
 ## Install — PC
 
+> **Updates from signed releases.** After the first install below, run `windows/launcher/Install-DeskApps.ps1`
+> once ([`windows/launcher/README.md`](../launcher/README.md)): the panel and the meeting reminder then run from
+> signed releases through a starter, and a new release is installed from the tray (dot, then Yes). Steps 5–6
+> below are then done by the starter; `autostart.ps1` refuses to re-point the task.
+
 Everything lives in `%LOCALAPPDATA%\DeskTray\`:
 
 1. Create the folder and copy the five files there:
@@ -170,7 +175,8 @@ Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" |
   Where-Object { $_.CommandLine -like '*desk-tray.ps1*' } | Invoke-CimMethod -MethodName Terminate
 ```
 
-To upgrade, copy the new files over the old ones and start the task again; a new copy ends the older one.
+To upgrade without the starter, copy the new files over the old ones and start the task again; a new copy ends
+the older one. With the starter, use the dot on the tray icon; Exit ends the panel and its starter.
 
 ## Dry run
 

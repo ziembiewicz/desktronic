@@ -209,3 +209,27 @@ Describe 'Merge-DeskResult' {
         $sent.notBefore | Should Be $t0
     }
 }
+
+Describe 'ConvertFrom-DeskPush api' {
+    It 'reads the Home Assistant api version, 0 when missing or not a number' {
+        (ConvertFrom-DeskPush '{"h":"85.0","status":"Idle","m":[],"locked":"off","api":1}').api | Should Be 1
+        (ConvertFrom-DeskPush '{"h":"85.0","status":"Idle","m":[],"locked":"off"}').api | Should Be 0
+        (ConvertFrom-DeskPush '{"h":"85.0","status":"Idle","m":[],"locked":"off","api":"x"}').api | Should Be 0
+        (ConvertFrom-DeskPush '{"h":"85.0","status":"Idle","m":[],"locked":"off","api":-4}').api | Should Be 0
+    }
+}
+
+Describe 'Test-DeskQuiet' {
+    $idle = [pscustomobject]@{ status = 'Idle' }
+    $moving = [pscustomobject]@{ status = 'Raising' }
+    It 'waits while something is queued or sent' {
+        Test-DeskQuiet @{ kind = 'preset' } $null $idle $false | Should Be $false
+        Test-DeskQuiet $null @{ seq = 1 } $idle $false | Should Be $false
+    }
+    It 'waits while the desk moves' { Test-DeskQuiet $null $null $moving $false | Should Be $false }
+    It 'is quiet when idle, or when nothing is known about the desk' {
+        Test-DeskQuiet $null $null $idle $false | Should Be $true
+        Test-DeskQuiet $null $null $moving $true | Should Be $true
+        Test-DeskQuiet $null $null $null $false | Should Be $true
+    }
+}

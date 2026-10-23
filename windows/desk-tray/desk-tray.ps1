@@ -23,8 +23,8 @@
   PowerShell 7.4 or newer (pwsh.exe, Windows only; its default single-threaded apartment is what WinForms
   needs). The meeting reminder stays on Windows PowerShell 5.1 for its WinRT notification listener; this
   panel needs no WinRT. panel.html is read by WebView2, not by PowerShell.
-  Folder layout (%LOCALAPPDATA%\DeskTray\, see README.md):
-    desk-tray.ps1, panel.html, config.json (not in any repository), desk-tray.log
+  Folder layout (-DataDir, default the script's folder; %LOCALAPPDATA%\DeskTray\, see README.md):
+    config.json (not in any repository), desk-tray.log; desk-tray.ps1 and panel.html too when installed by hand
     lib\webview2\...  and lib\fonts\DSEG7Modern-Bold.woff2   (Install-DeskTrayDeps.ps1)
     web\               panel.html and the font, copied on start (the only folder the page can read)
     wv2data\           WebView2 user data
@@ -33,18 +33,27 @@
       "panel_stop_webhook_url": "http://192.0.2.10:8123/api/webhook/DESK_PANEL_STOP_WEBHOOK_ID",
       "push_token":             "<the value of desk_panel_push_token in Home Assistant secrets.yaml>" }
   The log never contains the webhook URLs, the token or pushed data; only start/stop, panel open times,
-  dropped commands and errors.
+  dropped commands, update steps and errors.
+  Updates: started by the starter (windows/launcher/Start-DeskApp.ps1) with -DeskAppsRoot, the panel looks for a
+  newer signed release (Update-DeskApps.ps1 -Mode Check, in the background) a minute after start and every 6 h.
+  A newer one puts a dot on the tray icon and the gear; the question comes only when the owner clicks it
+  ("Update to ..." in the tray menu, or the gear), with No as the default. Yes prepares the release in the
+  background, waits until nothing is sent to the desk and ends with exit code 3: the starter starts the new one.
 #>
 #Requires -Version 7.4
 #Requires -PSEdition Core
 param(
-    [string]$ConfigPath = (Join-Path $PSScriptRoot 'config.json'),
+    [string]$DataDir = $PSScriptRoot,
+    [string]$ConfigPath = '',
+    [string]$DeskAppsRoot = '',
+    [string]$AppVersion = 'manual',
     [string]$ListenPrefix = 'http://+:8765/desk/',
     [int]$HelloSeconds = 30,
     [int]$StaleSeconds = 90
 )
 
-$logPath = Join-Path $PSScriptRoot 'desk-tray.log'
+if (-not $ConfigPath) { $ConfigPath = Join-Path $DataDir 'config.json' }
+$logPath = Join-Path $DataDir 'desk-tray.log'
 $logMaxBytes = 512KB
 $knownRefusals = @('locked', 'not_ready', 'busy', 'too_soon', 'budget', 'motor', 'reverse', 'limit', 'no_preset', 'here')
 # Refusals that pass with time, and how many seconds to wait before the next try. Any other result drops the
@@ -106,8 +115,9 @@ function ConvertTo-DeskNumber {
 }
 
 function ConvertFrom-DeskPush {
-    # Validates a push from Home Assistant: {"h","status","m":[4],"locked","seq","result"}. Unknown values are
-    # dropped, never passed to the page as they came.
+    # Validates a push from Home Assistant: {"h","status","m":[4],"locked","seq","result","api"}. Unknown values
+    # are dropped, never passed to the page as they came. "api" is the version of the Home Assistant side of the
+    # panel (0 when missing); an update that needs a newer one is refused.
     param([string]$Json)
     try { $p = $Json | ConvertFrom-Json } catch { return $null }
     if ($null -eq $p -or $p -isnot [pscustomobject]) { return $null }
@@ -123,6 +133,8 @@ function ConvertFrom-DeskPush {
     if ($result -ne 'ok' -and $result -notin $knownRefusals) { $result = '' }
     $seq = 0
     $null = [int]::TryParse([string]$p.seq, [ref]$seq)
+    $api = 0
+    $null = [int]::TryParse([string]$p.api, [ref]$api)
     [pscustomobject]@{
         h       = ConvertTo-DeskNumber $p.h
         status  = $status
@@ -130,6 +142,7 @@ function ConvertFrom-DeskPush {
         locked  = ([string]$p.locked -ne 'off')
         seq     = $seq
         result  = $result
+        api     = [math]::Max($api, 0)
     }
 }
 
@@ -175,6 +188,15 @@ function Merge-DeskResult {
     $wait = $Now.AddSeconds($retryAfter[$Result])
     if ($q.notBefore -lt $wait) { $q.notBefore = $wait }
     $q
+}
+
+function Test-DeskQuiet {
+    # True when an update may restart the panel: nothing queued or sent and waiting for its result, and the desk is
+    # not moving (or its state is unknown or stale: then nothing can be sent anyway).
+    param($Queue, $InFlight, $Desk, [bool]$Stale)
+    if ($null -ne $Queue -or $null -ne $InFlight) { return $false }
+    if ($Stale -or $null -eq $Desk) { return $true }
+    $Desk.status -notin 'Raising', 'Lowering'
 }
 
 function Stop-OlderInstance {
@@ -248,8 +270,9 @@ public static class DeskNative {
         if (GetDpiForMonitor(MonitorFromPoint(p, 2), 0, out x, out y) == 0) return x;
         return 96;
     }
-    // A small desk glyph for the tray: a light top and two legs.
-    public static Icon DeskIcon(int size) {
+    // A small desk glyph for the tray: a light top and two legs; with badge, an amber dot (update available).
+    public static Icon DeskIcon(int size) { return DeskIcon(size, false); }
+    public static Icon DeskIcon(int size, bool badge) {
         using (Bitmap b = new Bitmap(size, size)) {
             using (Graphics g = Graphics.FromImage(b)) {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -259,6 +282,9 @@ public static class DeskNative {
                     g.FillRectangle(top, 1 * u, 4 * u, 14 * u, 3 * u);
                     g.FillRectangle(leg, 3 * u, 7 * u, 2 * u, 7 * u);
                     g.FillRectangle(leg, 11 * u, 7 * u, 2 * u, 7 * u);
+                }
+                if (badge) {
+                    using (SolidBrush dot = new SolidBrush(Color.FromArgb(255, 176, 32))) { g.FillEllipse(dot, 9 * u, 0, 7 * u, 7 * u); }
                 }
             }
             IntPtr h = b.GetHicon();
@@ -322,7 +348,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
     $null = [DeskNative]::SetThreadDpiAwarenessContext([IntPtr](-4))
 
     # WebView2: SDK from lib\webview2 (Install-DeskTrayDeps.ps1), loader matching this process.
-    $lib = Join-Path $PSScriptRoot 'lib\webview2'
+    $lib = Join-Path $DataDir 'lib\webview2'
     try {
         Add-Type -Path (Join-Path $lib 'Microsoft.Web.WebView2.Core.dll')
         Add-Type -Path (Join-Path $lib 'Microsoft.Web.WebView2.WinForms.dll')
@@ -337,11 +363,11 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
         exit 1
     }
 
-    # The page may read only web\: panel.html and the font, nothing else from this folder (config.json!).
-    $script:WebRoot = Join-Path $PSScriptRoot 'web'
+    # The page may read only web\: panel.html (from the release) and the font, nothing else from the data folder (config.json!).
+    $script:WebRoot = Join-Path $DataDir 'web'
     $null = New-Item -ItemType Directory -Force -Path $script:WebRoot
     Copy-Item -Force -Path (Join-Path $PSScriptRoot 'panel.html') -Destination (Join-Path $script:WebRoot 'panel.html')
-    $font = Join-Path $PSScriptRoot 'lib\fonts\DSEG7Modern-Bold.woff2'
+    $font = Join-Path $DataDir 'lib\fonts\DSEG7Modern-Bold.woff2'
     if (Test-Path $font) { Copy-Item -Force -Path $font -Destination $script:WebRoot }
     else { Write-Log 'WARN font missing: run Install-DeskTrayDeps.ps1 (the height shows in a plain font)' }
 
@@ -363,6 +389,13 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
     $script:InFlight = $null                     # @{ seq; item; at } sent, no result yet
     $script:Seq = 0
     $script:LastSendFailedAt = [DateTime]::MinValue  # red light on the panel for 30 s after a failed send
+    $script:ExitCode = 0                          # 3 = restart for an update (the starter applies it)
+    $script:HaApi = 0                             # "api" from the last push
+    $script:HelloStats = @{ sent = 0; failed = 0; since = [DateTime]::UtcNow }
+    $updWorker = if ($DeskAppsRoot) { Join-Path $DeskAppsRoot 'launcher\Update-DeskApps.ps1' } else { '' }
+    # Update state: the background worker (one at a time), the release on offer, and when the restart was asked for.
+    $script:Upd = @{ enabled = [bool]($updWorker -and (Test-Path $updWorker)); script = $updWorker; worker = $null; mode = ''
+                     nextCheck = [DateTime]::UtcNow.AddSeconds(60); offer = $null; restartAt = $null; asking = $false }
 
     function script:Send-ToPage([hashtable]$Obj) {
         if ($script:Wv -and $script:Ready) {
@@ -417,7 +450,90 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
 
     function script:Send-Hello {
         $script:LastHelloAt = [DateTime]::UtcNow
+        $script:HelloStats.sent++
         Send-Webhook 'cmd' @{ cmd = 'hello' }
+    }
+
+    function script:Start-UpdateWorker([string]$Mode, [string[]]$Extra) {
+        # Update-DeskApps.ps1 in its own hidden pwsh: git and the checks never block this thread.
+        $psi = [Diagnostics.ProcessStartInfo]::new((Get-Process -Id $PID).Path)
+        foreach ($x in @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $script:Upd.script, '-Mode', $Mode, '-Root', $DeskAppsRoot) + $Extra) { $psi.ArgumentList.Add($x) }
+        $psi.UseShellExecute = $false
+        $psi.CreateNoWindow = $true
+        # An old result must never pass for this run's (a worker that dies before writing leaves nothing).
+        Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $DeskAppsRoot $(if ($Mode -eq 'Check') { 'update-check.json' } else { 'update-prepare.json' }))
+        try { $script:Upd.worker = [Diagnostics.Process]::Start($psi); $script:Upd.mode = $Mode }
+        catch { $script:Upd.worker = $null; Write-Log "ERROR update $($Mode.ToLowerInvariant()): $($_.Exception.Message)" }
+    }
+
+    function script:Set-UpdateBadge {
+        $on = $null -ne $script:Upd.offer
+        $old = $script:Tray.Icon
+        $script:Tray.Icon = [DeskNative]::DeskIcon([System.Windows.Forms.SystemInformation]::SmallIconSize.Width, $on)
+        if ($old) { $old.Dispose() }
+        $script:UpdItem.Visible = $on
+        if ($on) { $script:UpdItem.Text = "Update to $($script:Upd.offer.tag)" }
+        $busy = ($script:Upd.mode -eq 'Prepare' -and $script:Upd.worker) -or $script:Upd.restartAt
+        Send-ToPage @{ type = 'update'; tag = $(if ($on) { $script:Upd.offer.tag } else { '' }); busy = [bool]$busy }
+    }
+
+    function script:Request-Update {
+        # The only question the panel asks, and only after a click on the dot (tray menu or gear). No is the default.
+        if (-not $script:Upd.offer -or $script:Upd.worker -or $script:Upd.restartAt -or $script:Upd.asking) { return }
+        $o = $script:Upd.offer
+        $script:Upd.asking = $true
+        try {
+            $ans = [System.Windows.Forms.MessageBox]::Show(
+                "Update the desk apps to $($o.tag)?`n`nThe panel restarts now; the meeting reminder restarts as soon as it waits for no meeting.",
+                'Desk', 'YesNo', 'Question', 'Button2', 'DefaultDesktopOnly')
+        }
+        finally { $script:Upd.asking = $false }
+        if ($ans -ne 'Yes') { Write-Log "update: $($o.tag) declined"; return }
+        Write-Log "update: preparing $($o.tag)"
+        Start-UpdateWorker 'Prepare' @('-Tag', $o.tag, '-TagObject', $o.tagObject, '-Commit', $o.commit, '-HaApi', [string]$script:HaApi)
+        Set-UpdateBadge
+    }
+
+    function script:Step-Update([datetime]$Now) {
+        # Called by the timer: collects a finished worker, starts the next check, restarts for a prepared release.
+        $w = $script:Upd.worker
+        if ($w -and $w.HasExited) {
+            $script:Upd.worker = $null
+            $file = Join-Path $DeskAppsRoot $(if ($script:Upd.mode -eq 'Check') { 'update-check.json' } else { 'update-prepare.json' })
+            $r = $null
+            try { $r = Get-Content -Raw -Path $file | ConvertFrom-Json } catch { }
+            if ($script:Upd.mode -eq 'Check') {
+                if ($r -and $r.status -eq 'available' -and $r.tag) {
+                    if (-not $script:Upd.offer -or $script:Upd.offer.tag -ne $r.tag) { Write-Log "update: $($r.tag) available" }
+                    $script:Upd.offer = @{ tag = [string]$r.tag; tagObject = [string]$r.tagObject; commit = [string]$r.commit }
+                }
+                elseif ($r -and $r.status -eq 'none') { $script:Upd.offer = $null }
+                else { Write-Log "update check failed: $(if ($r) { $r.reason } else { 'no result' })" }
+            }
+            elseif ($r -and $r.status -eq 'ready') {
+                Write-Log "update: $($r.tag) ready, restarting when nothing goes to the desk"
+                $script:Upd.restartAt = $Now
+            }
+            else {
+                $why = if ($r -and $r.reason) { [string]$r.reason } else { 'no result' }
+                Write-Log "update: not applied: $why"
+                $script:Tray.ShowBalloonTip(20000, 'Desk', "Not updated: $why", 'Warning')
+            }
+            Set-UpdateBadge
+        }
+        if (-not $script:Upd.worker -and -not $script:Upd.restartAt -and $Now -ge $script:Upd.nextCheck) {
+            $script:Upd.nextCheck = $Now.AddHours(6)
+            Start-UpdateWorker 'Check' @()
+        }
+        if ($script:Upd.restartAt) {
+            $stale = ($null -eq $script:Desk) -or (($Now - $script:LastPushAt).TotalSeconds -gt $StaleSeconds)
+            if ((Test-DeskQuiet $script:Queue $script:InFlight $script:Desk $stale) -or ($Now - $script:Upd.restartAt).TotalSeconds -gt 120) {
+                Write-Log 'update: restarting into the new release (exit 3)'
+                $script:Upd.restartAt = $null
+                $script:ExitCode = 3
+                [System.Windows.Forms.Application]::ExitThread()
+            }
+        }
     }
 
     function script:Invoke-PushRequest($Ctx) {
@@ -435,6 +551,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
             $push = ConvertFrom-DeskPush $body
             if ($null -eq $push) { $resp.StatusCode = 400; Write-Log 'push refused: not valid JSON'; return }
             $script:Desk = $push; $script:LastPushAt = [DateTime]::UtcNow
+            $script:HaApi = $push.api
             Send-State
             if ($push.seq -gt 0 -and $push.result -and $script:InFlight -and $push.seq -eq $script:InFlight.seq) { Complete-InFlight $push.result }
             $resp.StatusCode = 204
@@ -458,8 +575,10 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
                     $script:Ready = $true
                     Write-Log ('panel ready {0} ms after open' -f ($script:Clock.ElapsedMilliseconds - $script:TShow))
                     Send-State
+                    if ($script:Upd.enabled) { Set-UpdateBadge }
                 }
                 'hide' { Hide-Flyout 'hide button' }
+                'update' { Invoke-Later 80 { Request-Update } }
                 'stop' {
                     $script:Queue = $null; $script:InFlight = $null
                     Stop-Desk 'red button'
@@ -488,7 +607,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
         $wv = New-Object Microsoft.Web.WebView2.WinForms.WebView2
         $wv.Dock = 'Fill'
         $cp = New-Object Microsoft.Web.WebView2.WinForms.CoreWebView2CreationProperties
-        $cp.UserDataFolder = Join-Path $PSScriptRoot 'wv2data'
+        $cp.UserDataFolder = Join-Path $DataDir 'wv2data'
         $wv.CreationProperties = $cp
         $wv.DefaultBackgroundColor = [System.Drawing.Color]::FromArgb(255, 32, 34, 39)
         $wv.add_CoreWebView2InitializationCompleted({
@@ -578,6 +697,8 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
     # Open later than the click, so the closing menu does not take the focus from the new panel.
     $null = $menu.Items.Add('Open app', $null, { Invoke-Later 80 { Show-Flyout 'menu' } })
     $null = $menu.Items.Add('Cancel', $null, { $script:Queue = $null; $script:InFlight = $null; Stop-Desk 'menu Cancel'; Send-Queue })
+    $script:UpdItem = $menu.Items.Add('Update', $null, { Invoke-Later 80 { Request-Update } })
+    $script:UpdItem.Visible = $false
     $null = $menu.Items.Add('Exit', $null, { [System.Windows.Forms.Application]::ExitThread() })
     foreach ($it in $menu.Items) { $it.ForeColor = [System.Drawing.Color]::FromArgb(242, 242, 242); $it.Padding = New-Object System.Windows.Forms.Padding(8, 6, 24, 6) }
     $menu.add_Opened({ param($s, $e) $null = [DeskNative]::SetDwmInt($s.Handle, [DeskNative]::DWMWA_WINDOW_CORNER_PREFERENCE, [DeskNative]::DWMWCP_ROUNDSMALL) })
@@ -635,7 +756,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
                     if ($p.seq -and $script:InFlight -and $script:InFlight.seq -eq $p.seq) { $script:InFlight = $null; Send-Queue }
                 }
                 elseif (-not $script:HelloFailing) { Write-Log 'ERROR hello: Home Assistant not reachable (logged once until it answers)' }
-                if ($p.what -eq 'hello') { $script:HelloFailing = $true }
+                if ($p.what -eq 'hello') { $script:HelloFailing = $true; $script:HelloStats.failed++ }
             }
             elseif (-not $p.task.Result.IsSuccessStatusCode) {
                 Write-Log "ERROR $($p.what): HTTP $([int]$p.task.Result.StatusCode)"
@@ -666,6 +787,11 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
             }
         }
         if (($now - $script:LastHelloAt).TotalSeconds -ge $HelloSeconds) { Send-Hello }
+        if (($now - $script:HelloStats.since).TotalMinutes -ge 10) {
+            Write-Log "hello: $($script:HelloStats.sent) sent, $($script:HelloStats.failed) failed in 10 min"
+            $script:HelloStats = @{ sent = 0; failed = 0; since = $now }
+        }
+        if ($script:Upd.enabled) { try { Step-Update $now } catch { Write-Log "ERROR update: $($_.Exception.Message)"; $script:Upd.worker = $null } }
         # Mark the height stale once, when the pushes stop.
         $stale = ($null -ne $script:Desk) -and (([DateTime]::UtcNow - $script:LastPushAt).TotalSeconds -gt $StaleSeconds)
         if ($stale -and -not $script:StaleShown) { Send-State; Write-Log 'no push for 90 s' }
@@ -673,7 +799,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
     })
     $tick.Start()
 
-    Write-Log "start: WebView2 Runtime $rt, listener=$([bool]$script:Listener)"
+    Write-Log "start: version=$AppVersion WebView2 Runtime $rt, listener=$([bool]$script:Listener), updates=$($script:Upd.enabled)"
     Send-Hello
     try { [System.Windows.Forms.Application]::Run() }
     finally {
@@ -682,8 +808,9 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
         $script:Tray.Visible = $false; $script:Tray.Dispose()
         if ($script:Wv) { $script:Wv.Dispose() }
         $script:Http.Dispose()
-        Write-Log 'stop'
+        Write-Log "stop (exit $script:ExitCode)"
     }
+    exit $script:ExitCode
 }
 
 # Dot-sourcing (tests) only defines the functions above; running the file starts the tray.
