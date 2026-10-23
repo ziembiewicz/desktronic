@@ -85,6 +85,33 @@ Describe 'Test-DeskQueueEmpty' {
     }
 }
 
+Describe 'times under Polish regional settings' {
+    # Polish Windows reads 10/23/2026 as day 10 of month 23; the starter died on it 5 s into every trial.
+    BeforeAll { $was = [cultureinfo]::CurrentCulture; [cultureinfo]::CurrentCulture = 'pl-PL' }
+    AfterAll { [cultureinfo]::CurrentCulture = $was }
+    function Read-Back([hashtable]$App) { (ConvertTo-DeskState (ConvertTo-Json -InputObject @{ apps = @{ 'desk-tray' = $App } } -Depth 6)).apps['desk-tray'] }
+    It 'a trial read back from state.json passes after 60 s' {
+        $a = New-App; $a.current = 'v1'; $a.pending = 'v2'; $null = Step-DeskApply $a $t0
+        $b = Read-Back $a
+        $b.trial.since | Should Be $t0.ToString('o')
+        Step-DeskTrialPassed $b $t0.AddSeconds(61) | Should Be $true
+    }
+    It 'a trial read back from state.json still rolls back a crash' {
+        $a = New-App; $a.current = 'v1'; $a.pending = 'v2'; $null = Step-DeskApply $a $t0
+        Step-DeskExit (Read-Back $a) 1 $t0.AddSeconds(10) | Should Be 'rollback'
+    }
+    It 'reads a start the old starter wrote in the invariant format, and drops one it cannot read' {
+        $j = '{"apps":{"desk-tray":{"current":"v2","trial":{"version":"v2","since":"10/23/2026 09:00:00"}}}}'
+        (ConvertTo-DeskState $j).apps['desk-tray'].trial.since | Should Be $t0.ToString('o')
+        (ConvertTo-DeskState $j.Replace('10/23/2026 09:00:00', 'soon')).apps['desk-tray'].trial | Should Be $null
+    }
+    It 'sees a meeting that waits, written by the meeting reminder as local time without a zone' {
+        $next = $t0.ToLocalTime().AddMinutes(40).ToString('yyyy-MM-ddTHH:mm:ss.fffffff')
+        Test-DeskQueueEmpty ('{"count":1,"next":"' + $next + '"}') $t0 | Should Be $false
+        Test-DeskQueueEmpty ('{"count":1,"next":"' + $t0.AddMinutes(40).ToString('o') + '"}') $t0 | Should Be $false
+    }
+}
+
 $haveTools = [bool](Get-Command git -ErrorAction SilentlyContinue)
 Describe 'end to end with releases from main' {
     if (-not $haveTools) { It 'needs git' -Skip { } ; return }
