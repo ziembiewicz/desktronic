@@ -574,6 +574,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
                 'ready' {
                     $script:Ready = $true
                     Write-Log ('panel ready {0} ms after open' -f ($script:Clock.ElapsedMilliseconds - $script:TShow))
+                    Send-ToPage @{ type = 'version'; v = $AppVersion }
                     Send-State
                     if ($script:Upd.enabled) { Set-UpdateBadge }
                 }
