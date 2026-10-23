@@ -58,6 +58,9 @@ and `%LOCALAPPDATA%\meeting-reminder\`) and decides what happens when it ends:
 The meeting reminder keeps its meetings in memory, so the starter restarts it for an update only while
 `queue.json` says no meeting waits. One starter per app: a second one ends at once.
 Logs: `%LOCALAPPDATA%\DeskApps\launcher.log` (starter) and `update.log` (checks and preparations).
+Times in `state.json` and `queue.json` are ISO 8601 and are read with the invariant culture, whatever the Windows
+language: a Polish Windows reads `10/23/2026` as day 10 of month 23. A starter that ends on an error logs
+`starter failed: …` first.
 
 ## Install — once, by hand
 
