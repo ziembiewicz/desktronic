@@ -118,6 +118,11 @@ try {
         }
     }
 }
+catch {
+    # Without this the starter would end without a trace and leave the app running on its own.
+    Write-Log "starter failed: $($_.Exception.Message) (line $($_.InvocationInfo.ScriptLineNumber) of $(Split-Path -Leaf $_.InvocationInfo.ScriptName))"
+    exit 1
+}
 finally {
     $mutex.ReleaseMutex()
     $mutex.Dispose()

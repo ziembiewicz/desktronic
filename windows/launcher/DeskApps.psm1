@@ -31,6 +31,23 @@ function ConvertTo-DeskVersion {
     0
 }
 
+# ------------------------------------------------------------------ time (pure)
+
+function ConvertTo-DeskTime {
+    # A time read from JSON -> [datetime] in UTC, or $null. ConvertFrom-Json in PowerShell 7 turns ISO strings into
+    # [datetime] and [string] of that gives the invariant format (10/23/2026 09:00:00), which a Polish Windows reads
+    # as day 10 of month 23: never parse with the current culture. A time without a zone is local with -Local, else UTC.
+    param($Value, [switch]$Local)
+    if ($Value -is [datetime]) {
+        if ($Value.Kind -eq [DateTimeKind]::Unspecified -and -not $Local) { return [datetime]::SpecifyKind($Value, [DateTimeKind]::Utc) }
+        return $Value.ToUniversalTime()
+    }
+    $styles = [Globalization.DateTimeStyles]::AdjustToUniversal -bor $(if ($Local) { [Globalization.DateTimeStyles]::AssumeLocal } else { [Globalization.DateTimeStyles]::AssumeUniversal })
+    $t = [datetime]::MinValue
+    if ($Value -and [datetime]::TryParse([string]$Value, [cultureinfo]::InvariantCulture, $styles, [ref]$t)) { return $t }
+    $null
+}
+
 # ------------------------------------------------------------------ manifest and requirements (pure)
 
 function Test-DeskManifest {
@@ -88,7 +105,9 @@ function ConvertTo-DeskState {
         $src = if ($p -and $p.apps) { $p.apps.$app } else { $null }
         if ($src) {
             foreach ($k in 'current', 'previous', 'pending') { if ($src.$k) { $a[$k] = [string]$src.$k } }
-            if ($src.trial -and $src.trial.version) { $a.trial = @{ version = [string]$src.trial.version; since = [string]$src.trial.since } }
+            # A trial whose start cannot be read counts as passed.
+            $since = if ($src.trial) { ConvertTo-DeskTime $src.trial.since } else { $null }
+            if ($src.trial.version -and $since) { $a.trial = @{ version = [string]$src.trial.version; since = $since.ToString('o') } }
             $a.failed = @($src.failed | Where-Object { $_ } | ForEach-Object { [string]$_ })
         }
         $s.apps[$app] = $a
@@ -115,7 +134,7 @@ function Step-DeskExit {
     param([hashtable]$App, [int]$ExitCode, [datetime]$Now, [int]$TrialSeconds = 60)
     if ($ExitCode -eq 3) { return 'apply' }
     if ($ExitCode -eq 0) { $App.trial = $null; return 'end' }
-    if ($App.trial -and ($Now - [datetime]::Parse($App.trial.since, $null, 'RoundtripKind')).TotalSeconds -lt $TrialSeconds) {
+    if ($App.trial -and ($Now.ToUniversalTime() - (ConvertTo-DeskTime $App.trial.since)).TotalSeconds -lt $TrialSeconds) {
         $bad = $App.current
         $App.failed = @(@($App.failed) + $bad | Select-Object -Unique)
         $App.trial = $null
@@ -131,7 +150,7 @@ function Step-DeskExit {
 function Step-DeskTrialPassed {
     # The app has run TrialSeconds: its version is good.
     param([hashtable]$App, [datetime]$Now, [int]$TrialSeconds = 60)
-    if ($App.trial -and ($Now - [datetime]::Parse($App.trial.since, $null, 'RoundtripKind')).TotalSeconds -ge $TrialSeconds) {
+    if ($App.trial -and ($Now.ToUniversalTime() - (ConvertTo-DeskTime $App.trial.since)).TotalSeconds -ge $TrialSeconds) {
         $App.trial = $null
         return $true
     }
@@ -145,9 +164,9 @@ function Test-DeskQueueEmpty {
     if (-not $Json) { return $true }
     try { $q = $Json | ConvertFrom-Json } catch { return $true }
     if ([int]$q.count -le 0) { return $true }
-    $next = [datetime]::MinValue
-    if (-not [datetime]::TryParse([string]$q.next, $null, 'RoundtripKind', [ref]$next)) { return $true }
-    $next.ToUniversalTime() -lt $Now.ToUniversalTime().AddSeconds(-60)
+    $next = ConvertTo-DeskTime $q.next -Local
+    if (-not $next) { return $true }
+    $next -lt $Now.ToUniversalTime().AddSeconds(-60)
 }
 
 # ------------------------------------------------------------------ files
