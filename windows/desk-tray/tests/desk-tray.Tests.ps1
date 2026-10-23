@@ -233,3 +233,112 @@ Describe 'Test-DeskQuiet' {
         Test-DeskQuiet $null $null $null $false | Should Be $true
     }
 }
+
+Describe 'ConvertFrom-DeskPush meeting' {
+    It 'passes warn and go, and nothing else' {
+        (ConvertFrom-DeskPush '{"h":"85.0","status":"Idle","m":[],"locked":"off","meeting":"warn"}').meeting | Should Be 'warn'
+        (ConvertFrom-DeskPush '{"h":"85.0","status":"Idle","m":[],"locked":"off","meeting":"go"}').meeting | Should Be 'go'
+        (ConvertFrom-DeskPush '{"h":"85.0","status":"Idle","m":[],"locked":"off","meeting":""}').meeting | Should Be ''
+        (ConvertFrom-DeskPush '{"h":"85.0","status":"Idle","m":[],"locked":"off"}').meeting | Should Be ''
+        (ConvertFrom-DeskPush '{"h":"85.0","status":"Idle","m":[],"locked":"off","meeting":"Weekly sync"}').meeting | Should Be ''
+        (ConvertFrom-DeskPush '{"h":"85.0","status":"Idle","m":[],"locked":"off","meeting":["go"]}').meeting | Should Be ''
+    }
+}
+
+Describe 'Get-DeskMeetingAction' {
+    $never = [datetime]::MinValue
+    It 'shows a hidden panel when the page is ready and nothing muted it' {
+        Get-DeskMeetingAction 'warn' $false $false $true $never $t0 | Should Be 'show'
+        Get-DeskMeetingAction 'go' $false $false $true $never $t0 | Should Be 'show'
+    }
+    It 'only restarts the clock of a meeting panel nobody clicked' {
+        Get-DeskMeetingAction 'go' $true $true $true $never $t0 | Should Be 'refresh'
+    }
+    It 'leaves a panel the owner has open as it is' {
+        Get-DeskMeetingAction 'warn' $true $false $true $never $t0 | Should Be 'open'
+        Get-DeskMeetingAction 'warn' $true $false $true $t0.AddSeconds(60) $t0 | Should Be 'open'
+    }
+    It 'stays away while muted, and shows again when the mute ends' {
+        Get-DeskMeetingAction 'warn' $false $false $true $t0.AddSeconds(1) $t0 | Should Be 'muted'
+        Get-DeskMeetingAction 'warn' $false $false $true $t0 $t0 | Should Be 'show'
+    }
+    It 'skips the step while the page is not loaded' {
+        Get-DeskMeetingAction 'go' $false $false $false $never $t0 | Should Be 'not ready'
+    }
+    It 'does nothing without a meeting step' {
+        Get-DeskMeetingAction '' $false $false $true $never $t0 | Should Be 'none'
+        Get-DeskMeetingAction 'hello' $true $true $true $never $t0 | Should Be 'none'
+    }
+}
+
+Describe 'Test-DeskMeetingHide' {
+    $never = [datetime]::MinValue
+    function Meet([datetime]$signal, [datetime]$go) { @{ signalAt = $signal; goAt = $go } }
+    It 'after warn with no move: hides 50 s after the step' {
+        $m = Meet $t0 $never
+        Test-DeskMeetingHide $m $never $false $t0.AddSeconds(49) | Should Be $false
+        Test-DeskMeetingHide $m $never $false $t0.AddSeconds(50) | Should Be $true
+    }
+    It 'after go with no move: hides 50 s after go' {
+        $m = Meet $t0 $t0
+        Test-DeskMeetingHide $m $never $false $t0.AddSeconds(20) | Should Be $false
+        Test-DeskMeetingHide $m $never $false $t0.AddSeconds(50) | Should Be $true
+    }
+    It 'after go and a move: hides 10 s after the desk last moved' {
+        $m = Meet $t0 $t0
+        $stopped = $t0.AddSeconds(18)
+        Test-DeskMeetingHide $m $t0.AddSeconds(5) $true $t0.AddSeconds(10) | Should Be $false
+        Test-DeskMeetingHide $m $stopped $false $stopped.AddSeconds(9) | Should Be $false
+        Test-DeskMeetingHide $m $stopped $false $stopped.AddSeconds(10) | Should Be $true
+    }
+    It 'does not count the warn nudge as the move after go' {
+        $m = Meet $t0.AddSeconds(15) $t0.AddSeconds(15)
+        Test-DeskMeetingHide $m $t0.AddSeconds(2) $false $t0.AddSeconds(30) | Should Be $false
+    }
+    It 'counts the quiet time from the last move, not the first' {
+        $m = Meet $t0 $t0
+        Test-DeskMeetingHide $m $t0.AddSeconds(40) $false $t0.AddSeconds(45) | Should Be $false
+        Test-DeskMeetingHide $m $t0.AddSeconds(40) $false $t0.AddSeconds(55) | Should Be $true
+    }
+    It 'does not hide while the desk moves, until 90 s after the last step' {
+        $m = Meet $t0 $t0
+        Test-DeskMeetingHide $m $t0.AddSeconds(80) $true $t0.AddSeconds(85) | Should Be $false
+        Test-DeskMeetingHide $m $t0.AddSeconds(89) $true $t0.AddSeconds(90) | Should Be $true
+    }
+    It 'restarts with a repeated step' {
+        $m = Meet $t0.AddSeconds(40) $never
+        Test-DeskMeetingHide $m $never $false $t0.AddSeconds(60) | Should Be $false
+    }
+}
+
+Describe 'Test-DeskMeetingMute' {
+    It 'mutes only when the meeting panel was hidden by hand' {
+        Test-DeskMeetingMute 'hide button' $true | Should Be $true
+        Test-DeskMeetingMute 'tray click' $true | Should Be $true
+    }
+    It 'does not mute on focus lost, hiding by itself or a failed page' {
+        foreach ($w in 'focus lost', 'meeting over', 'page failed') { Test-DeskMeetingMute $w $true | Should Be $false }
+    }
+    It 'does not mute a panel the owner opened' {
+        Test-DeskMeetingMute 'hide button' $false | Should Be $false
+    }
+}
+
+Describe 'Test-DeskPageRebuild' {
+    It 'rebuilds the page at most 3 times an hour' {
+        Test-DeskPageRebuild @() $t0 | Should Be $true
+        Test-DeskPageRebuild @($t0.AddMinutes(-5), $t0.AddMinutes(-1)) $t0 | Should Be $true
+        Test-DeskPageRebuild @($t0.AddMinutes(-50), $t0.AddMinutes(-5), $t0.AddMinutes(-1)) $t0 | Should Be $false
+    }
+    It 'forgets rebuilds older than an hour' {
+        Test-DeskPageRebuild @($t0.AddMinutes(-61), $t0.AddMinutes(-5), $t0.AddMinutes(-1)) $t0 | Should Be $true
+    }
+}
+
+Describe 'Get-DeskFgNote' {
+    It 'tells whether the window in front stayed, became the panel or changed' {
+        Get-DeskFgNote ([IntPtr]100) ([IntPtr]100) ([IntPtr]7) | Should Be 'fg kept'
+        Get-DeskFgNote ([IntPtr]100) ([IntPtr]7) ([IntPtr]7) | Should Be 'fg panel'
+        Get-DeskFgNote ([IntPtr]100) ([IntPtr]200) ([IntPtr]7) | Should Be 'fg changed'
+    }
+}

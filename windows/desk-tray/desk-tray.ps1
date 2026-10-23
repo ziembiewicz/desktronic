@@ -17,6 +17,14 @@
   empties the queue: the desk never moves on its own while nobody looks at the panel.
   The control box ignores stop during a move it runs itself: the handset is the only reliable stop.
 
+  Meetings: when the meeting reminder's warn or go was accepted by Home Assistant, a push carries
+  "meeting": "warn" or "go" (homeassistant/automations/desk_panel_meeting.yaml). A hidden panel then shows by
+  itself in the corner of the main screen without taking the focus: keys keep going to the window in front, and
+  the panel only shows the height while the desk rises. It hides by itself 10 s after the desk stopped (or 50 s
+  after the last step when nothing moved; 90 s at most). A click in it, or on the tray icon, makes it a normal
+  panel. Hiding it by hand ("-", Esc, the tray icon) keeps it away for 90 s. A panel the owner opened is left alone.
+  WebView2 is created at start (and kept at low memory while hidden), so the meeting panel shows at once.
+
   No Home Assistant token on the PC, no third-party agent, no MQTT.
 
 .NOTES
@@ -33,7 +41,7 @@
       "panel_stop_webhook_url": "http://192.0.2.10:8123/api/webhook/DESK_PANEL_STOP_WEBHOOK_ID",
       "push_token":             "<the value of desk_panel_push_token in Home Assistant secrets.yaml>" }
   The log never contains the webhook URLs, the token or pushed data; only start/stop, panel open times,
-  dropped commands, update steps and errors.
+  dropped commands, update steps, meeting steps (warn/go, never a title) and errors.
   Updates: started by the starter (windows/launcher/Start-DeskApp.ps1) with -DeskAppsRoot, the panel looks for a
   newer release on main (Update-DeskApps.ps1 -Mode Check, in the background) a minute after start and every 6 h.
   A newer one puts a dot on the tray icon and the gear; the question comes only when the owner clicks it
@@ -61,6 +69,12 @@ $knownRefusals = @('locked', 'not_ready', 'busy', 'too_soon', 'budget', 'motor',
 $retryAfter = @{ too_soon = 1; busy = 1; not_ready = 3; budget = 3; motor = 3; reverse = 3 }
 $queueMaxAgeSeconds = 20     # an item that could not go out for this long is dropped, not done late
 $inv = [Globalization.CultureInfo]::InvariantCulture
+# The panel shown for a meeting: hides this long after the desk last moved, after this long when nothing moved,
+# and after this long whatever happens; hiding it by hand keeps it away this long.
+$meetQuietSeconds = 10
+$meetIdleSeconds = 50
+$meetMaxSeconds = 90
+$meetMuteSeconds = 90
 
 function Write-Log {
     param([string]$Message)
@@ -115,9 +129,10 @@ function ConvertTo-DeskNumber {
 }
 
 function ConvertFrom-DeskPush {
-    # Validates a push from Home Assistant: {"h","status","m":[4],"locked","seq","result","api"}. Unknown values
-    # are dropped, never passed to the page as they came. "api" is the version of the Home Assistant side of the
-    # panel (0 when missing); an update that needs a newer one is refused.
+    # Validates a push from Home Assistant: {"h","status","m":[4],"locked","seq","result","api","meeting"}. Unknown
+    # values are dropped, never passed to the page as they came. "api" is the version of the Home Assistant side of
+    # the panel (0 when missing); an update that needs a newer one is refused. "meeting" is the meeting reminder's
+    # step that Home Assistant just accepted ("warn" or "go"), empty in every other push.
     param([string]$Json)
     try { $p = $Json | ConvertFrom-Json } catch { return $null }
     if ($null -eq $p -or $p -isnot [pscustomobject]) { return $null }
@@ -135,6 +150,7 @@ function ConvertFrom-DeskPush {
     $null = [int]::TryParse([string]$p.seq, [ref]$seq)
     $api = 0
     $null = [int]::TryParse([string]$p.api, [ref]$api)
+    $meeting = if ($p.meeting -is [string] -and $p.meeting -in 'warn', 'go') { $p.meeting } else { '' }
     [pscustomobject]@{
         h       = ConvertTo-DeskNumber $p.h
         status  = $status
@@ -143,6 +159,7 @@ function ConvertFrom-DeskPush {
         seq     = $seq
         result  = $result
         api     = [math]::Max($api, 0)
+        meeting = $meeting
     }
 }
 
@@ -197,6 +214,55 @@ function Test-DeskQuiet {
     if ($null -ne $Queue -or $null -ne $InFlight) { return $false }
     if ($Stale -or $null -eq $Desk) { return $true }
     $Desk.status -notin 'Raising', 'Lowering'
+}
+
+function Get-DeskMeetingAction {
+    # What a meeting step from Home Assistant does to the panel:
+    #   show      hidden and not muted: show it without taking the focus
+    #   refresh   already shown for the meeting and not clicked: the step only restarts its clock
+    #   open      the owner opened it (or clicked it): left as it is
+    #   muted     hidden by hand less than $meetMuteSeconds ago
+    #   not ready the page has not loaded yet: showing it would take seconds, so it is skipped
+    #   none      not a meeting step
+    param([string]$Step, [bool]$Visible, [bool]$Passive, [bool]$PageReady, [datetime]$MutedUntil, [datetime]$Now)
+    if ($Step -notin 'warn', 'go') { return 'none' }
+    if ($Visible) { if ($Passive) { return 'refresh' } else { return 'open' } }
+    if ($Now -lt $MutedUntil) { return 'muted' }
+    if (-not $PageReady) { return 'not ready' }
+    'show'
+}
+
+function Test-DeskMeetingHide {
+    # True when the panel shown for a meeting, and not clicked since, hides by itself. $Meet: signalAt (last step),
+    # goAt (last go, MinValue before one); $LastMoveAt: the last push that showed the desk moving or just stopped.
+    # It hides $meetQuietSeconds after the desk last moved, once the desk moved after go or $meetIdleSeconds passed
+    # since the last step; and $meetMaxSeconds after the last step whatever happens.
+    param($Meet, [datetime]$LastMoveAt, [bool]$Moving, [datetime]$Now)
+    $sinceStep = ($Now - $Meet.signalAt).TotalSeconds
+    if ($sinceStep -ge $meetMaxSeconds) { return $true }
+    if ($Moving -or ($Now - $LastMoveAt).TotalSeconds -lt $meetQuietSeconds) { return $false }
+    ($Meet.goAt -gt [datetime]::MinValue -and $LastMoveAt -gt $Meet.goAt) -or $sinceStep -ge $meetIdleSeconds
+}
+
+function Test-DeskMeetingMute {
+    # Hiding the meeting panel by hand ("-" or Esc on the page, a click on the tray icon) keeps it away for
+    # $meetMuteSeconds. Losing the focus, hiding by itself or a failed page does not.
+    param([string]$Why, [bool]$MeetingShown)
+    $MeetingShown -and $Why -in 'hide button', 'tray click'
+}
+
+function Test-DeskPageRebuild {
+    # After the page's process failed it is rebuilt 2 s later, at most 3 times an hour; after that only on the next open.
+    param([datetime[]]$Recent, [datetime]$Now)
+    @($Recent | Where-Object { ($Now - $_).TotalMinutes -lt 60 }).Count -lt 3
+}
+
+function Get-DeskFgNote {
+    # Which window is in front after the panel showed without the focus. Handles only: no window titles are read.
+    param([IntPtr]$Before, [IntPtr]$Now, [IntPtr]$Panel)
+    if ($Now -eq $Panel) { return 'fg panel' }
+    if ($Now -eq $Before) { return 'fg kept' }
+    'fg changed'
 }
 
 function Stop-OlderInstance {
@@ -256,6 +322,7 @@ public static class DeskNative {
     [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
     [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr ctx);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool DestroyIcon(IntPtr hIcon);
     [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
     [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
@@ -264,8 +331,9 @@ public static class DeskNative {
     public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
     public const int DWMWCP_ROUND = 2, DWMWCP_ROUNDSMALL = 3;
     public static int SetDwmInt(IntPtr hwnd, int attr, int value) { return DwmSetWindowAttribute(hwnd, attr, ref value, 4); }
-    public static uint DpiAtCursor() {
-        POINT p; p.X = Cursor.Position.X; p.Y = Cursor.Position.Y;
+    public static uint DpiAtCursor() { return DpiAt(Cursor.Position); }
+    public static uint DpiAt(Point at) {
+        POINT p; p.X = at.X; p.Y = at.Y;
         uint x, y;
         if (GetDpiForMonitor(MonitorFromPoint(p, 2), 0, out x, out y) == 0) return x;
         return 96;
@@ -295,9 +363,36 @@ public static class DeskNative {
     }
 }
 
+// Always on top through WS_EX_TOPMOST here, not the TopMost property: WinForms applies TopMost with a
+// SetWindowPos that also activates the window, which would undo a show without activation.
+// Passive (the meeting panel): shown without activation and with WS_EX_NOACTIVATE, so Windows does not activate
+// it by keys or when another window closes; a click in it (desk-tray.ps1) turns Passive off.
 public class FlyoutForm : Form {
+    const int GWL_EXSTYLE = -20;
+    const long WS_EX_NOACTIVATE = 0x08000000;
+    const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOZORDER = 0x4, SWP_NOACTIVATE = 0x10, SWP_FRAMECHANGED = 0x20;
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")] static extern IntPtr GetWindowLongPtr(IntPtr hwnd, int index);
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW")] static extern IntPtr SetWindowLongPtr(IntPtr hwnd, int index, IntPtr value);
+    [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    bool passive;
+    public bool Passive { get { return passive; } }
+    public void SetPassive(bool on) {
+        passive = on;
+        if (!IsHandleCreated) { return; }
+        long ex = GetWindowLongPtr(Handle, GWL_EXSTYLE).ToInt64();
+        long nx = on ? (ex | WS_EX_NOACTIVATE) : (ex & ~WS_EX_NOACTIVATE);
+        if (nx == ex) { return; }
+        SetWindowLongPtr(Handle, GWL_EXSTYLE, new IntPtr(nx));
+        SetWindowPos(Handle, IntPtr.Zero, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
+    protected override bool ShowWithoutActivation { get { return passive; } }
     protected override CreateParams CreateParams {
-        get { CreateParams cp = base.CreateParams; cp.ExStyle |= 0x00000080; return cp; }  // WS_EX_TOOLWINDOW
+        get {
+            CreateParams cp = base.CreateParams;
+            cp.ExStyle |= 0x00000080 | 0x00000008;                    // WS_EX_TOOLWINDOW | WS_EX_TOPMOST
+            if (passive) { cp.ExStyle |= (int)WS_EX_NOACTIVATE; }
+            return cp;
+        }
     }
 }
 
@@ -376,6 +471,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
     $script:Ready = $false
     $script:LastHideAt = [DateTime]::MinValue
     $script:TShow = 0
+    $script:TPage = 0
     $script:Desk = $null                         # last validated push
     $script:LastPushAt = [DateTime]::MinValue
     $script:LastHelloAt = [DateTime]::MinValue
@@ -392,6 +488,12 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
     $script:ExitCode = 0                          # 3 = restart for an update (the starter applies it)
     $script:HaApi = 0                             # "api" from the last push
     $script:HelloStats = @{ sent = 0; failed = 0; since = [DateTime]::UtcNow }
+    # The panel shown for a meeting: shown = until it hides; signalAt/goAt for Test-DeskMeetingHide; fgBefore and
+    # fg1 for the foreground check the timer makes 1 s and 3 s after it showed.
+    $script:Meet = @{ shown = $false }
+    $script:MeetMutedUntil = [DateTime]::MinValue
+    $script:LastMoveAt = [DateTime]::MinValue        # last push with the desk moving, or the first one after it stopped
+    $script:PageRebuilds = @()                      # when the page was rebuilt after its process failed
     $updWorker = if ($DeskAppsRoot) { Join-Path $DeskAppsRoot 'launcher\Update-DeskApps.ps1' } else { '' }
     # Update state: the background worker (one at a time), the release on offer, and when the restart was asked for.
     $script:Upd = @{ enabled = [bool]($updWorker -and (Test-Path $updWorker)); script = $updWorker; worker = $null; mode = ''
@@ -538,6 +640,8 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
 
     function script:Invoke-PushRequest($Ctx) {
         $req = $Ctx.Request; $resp = $Ctx.Response
+        $t0 = $script:Clock.ElapsedMilliseconds
+        $step = ''
         try {
             if ($req.HttpMethod -ne 'POST') { $resp.StatusCode = 405; return }
             if (-not (Test-DeskToken $req.Headers['X-Desk-Token'] $script:Config.push_token)) {
@@ -550,14 +654,55 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
             $body = $reader.ReadToEnd(); $reader.Close()
             $push = ConvertFrom-DeskPush $body
             if ($null -eq $push) { $resp.StatusCode = 400; Write-Log 'push refused: not valid JSON'; return }
+            $prev = $script:Desk
             $script:Desk = $push; $script:LastPushAt = [DateTime]::UtcNow
             $script:HaApi = $push.api
+            if (($prev -and $prev.status -in 'Raising', 'Lowering') -or $push.status -in 'Raising', 'Lowering') { $script:LastMoveAt = $script:LastPushAt }
+            if ($script:Meet.shown -and (-not $prev -or $prev.h -ne $push.h)) { $script:Meet.heights++ }
             Send-State
             if ($push.seq -gt 0 -and $push.result -and $script:InFlight -and $push.seq -eq $script:InFlight.seq) { Complete-InFlight $push.result }
+            $step = $push.meeting
             $resp.StatusCode = 204
         }
         catch { $resp.StatusCode = 500; Write-Log "ERROR push: $($_.Exception.Message)" }
         finally { try { $resp.Close() } catch { } }
+        # After the answer, so Home Assistant never waits for the window.
+        if ($step) { Invoke-MeetingStep $step $t0 }
+    }
+
+    function script:Invoke-MeetingStep([string]$Step, [long]$T0) {
+        $now = [DateTime]::UtcNow
+        $a = Get-DeskMeetingAction $Step $script:Form.Visible $script:Form.Passive $script:Ready $script:MeetMutedUntil $now
+        switch ($a) {
+            'show' {
+                $script:Meet = @{ shown = $true; step = $Step; signalAt = $now; shownAt = $now; heights = 0; fgDone = 0; fg1 = ''
+                                  goAt = $(if ($Step -eq 'go') { $now } else { [DateTime]::MinValue }); fgBefore = [DeskNative]::GetForegroundWindow() }
+                Show-FlyoutPassive
+                Write-Log ('meeting {0}: shown passive in {1} ms' -f $Step, ($script:Clock.ElapsedMilliseconds - $T0))
+            }
+            'refresh' {
+                $script:Meet.signalAt = $now
+                if ($Step -eq 'go') { $script:Meet.goAt = $now }
+                Write-Log "meeting $Step`: panel already shown, clock restarted"
+            }
+            default { Write-Log "meeting $Step`: not shown ($a)" }
+        }
+    }
+
+    function script:Step-Meeting([datetime]$Now) {
+        # Called by the timer while the meeting panel is shown: the foreground check 1 s and 3 s after it showed
+        # (logged once, at 3 s), and hiding by itself while nobody clicked it.
+        $m = $script:Meet
+        $age = ($Now - $m.shownAt).TotalSeconds
+        # Only while nobody clicked it: after a click the panel is meant to be in front.
+        if ($script:Form.Passive -and $m.fgDone -lt 2 -and $age -ge 1 + 2 * $m.fgDone) {
+            $note = Get-DeskFgNote $m.fgBefore ([DeskNative]::GetForegroundWindow()) $script:Form.Handle
+            if ($m.fgDone -eq 0) { $m.fg1 = $note }
+            else { Write-Log ('meeting {0}: 1 s {1}, 3 s {2}' -f $m.step, $m.fg1, $note) }
+            $m.fgDone++
+        }
+        $moving = $script:Desk -and $script:Desk.status -in 'Raising', 'Lowering'
+        if ($script:Form.Passive -and (Test-DeskMeetingHide $m $script:LastMoveAt $moving $Now)) { Hide-Flyout 'meeting over' }
     }
 
     function script:Stop-Desk([string]$Why) {
@@ -573,12 +718,18 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
             switch ([string]$m.type) {
                 'ready' {
                     $script:Ready = $true
-                    Write-Log ('panel ready {0} ms after open' -f ($script:Clock.ElapsedMilliseconds - $script:TShow))
+                    if ($script:Form.Visible) { Write-Log ('panel ready {0} ms after open' -f ($script:Clock.ElapsedMilliseconds - $script:TShow)) }
+                    else {
+                        # Created at start (or rebuilt) while hidden: it waits at low memory for the first open.
+                        Write-Log ('page ready, hidden, {0} ms after it was created' -f ($script:Clock.ElapsedMilliseconds - $script:TPage))
+                        try { $script:Wv.CoreWebView2.MemoryUsageTargetLevel = 'Low' } catch { }
+                    }
                     Send-ToPage @{ type = 'version'; v = $AppVersion }
                     Send-State
                     if ($script:Upd.enabled) { Set-UpdateBadge }
                 }
                 'hide' { Hide-Flyout 'hide button' }
+                'activate' { if ($script:Form.Visible -and $script:Form.Passive) { Enter-PanelActive 'click' } }
                 'update' { Invoke-Later 80 { Request-Update } }
                 'stop' {
                     $script:Queue = $null; $script:InFlight = $null
@@ -598,13 +749,13 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
     $script:Form = New-Object FlyoutForm
     $script:Form.FormBorderStyle = 'None'
     $script:Form.ShowInTaskbar = $false
-    $script:Form.TopMost = $true
     $script:Form.StartPosition = 'Manual'
     $script:Form.AutoScaleMode = 'None'
     $script:Form.BackColor = [System.Drawing.Color]::FromArgb(32, 34, 39)
 
     function script:New-WebView {
         $script:Ready = $false
+        $script:TPage = $script:Clock.ElapsedMilliseconds
         $wv = New-Object Microsoft.Web.WebView2.WinForms.WebView2
         $wv.Dock = 'Fill'
         $cp = New-Object Microsoft.Web.WebView2.WinForms.CoreWebView2CreationProperties
@@ -629,9 +780,16 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
                 Write-Log "ERROR WebView2 process failed: $($e2.ProcessFailedKind)"
                 $script:Ready = $false
                 Hide-Flyout 'page failed'
-                # Rebuilt on the next open.
                 try { $script:Form.Controls.Remove($script:Wv); $script:Wv.Dispose() } catch { }
                 $script:Wv = $null
+                # Rebuilt 2 s later, so the meeting panel can show without the user opening it first; at most 3 times
+                # an hour, after that on the next open.
+                $now = [DateTime]::UtcNow
+                if (Test-DeskPageRebuild $script:PageRebuilds $now) {
+                    $script:PageRebuilds = @(@($script:PageRebuilds | Where-Object { ($now - $_).TotalMinutes -lt 60 }) + $now)
+                    Invoke-Later 2000 { if (-not $script:Wv) { New-WebView } }
+                }
+                else { Write-Log 'page failed 3 times in an hour: rebuilt on the next open' }
             })
             $c.SetVirtualHostNameToFolderMapping('desk.tray', $script:WebRoot, [Microsoft.Web.WebView2.Core.CoreWebView2HostResourceAccessKind]::DenyCors)
             $c.Navigate('https://desk.tray/panel.html')
@@ -641,10 +799,12 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
         $null = $wv.EnsureCoreWebView2Async($null)   # not awaited: completion arrives as the event above
     }
 
-    function script:Set-FlyoutBounds {
-        $scale = [DeskNative]::DpiAtCursor() / 96.0
+    function script:Set-FlyoutBounds([switch]$Primary) {
+        # Next to the tray of the screen under the cursor; the meeting panel on the main screen (where the tray is).
+        $screen = if ($Primary) { [System.Windows.Forms.Screen]::PrimaryScreen } else { [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position) }
+        $wa = $screen.WorkingArea
+        $scale = [DeskNative]::DpiAt((New-Object System.Drawing.Point([int]($wa.Left + $wa.Width / 2), [int]($wa.Top + $wa.Height / 2)))) / 96.0
         $w = [int](500 * $scale); $h = [int](224 * $scale); $m = [int](12 * $scale)
-        $wa = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position).WorkingArea
         $script:Form.Bounds = New-Object System.Drawing.Rectangle(($wa.Right - $w - $m), ($wa.Bottom - $h - $m), $w, $h)
     }
 
@@ -655,6 +815,8 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
 
     function script:Show-Flyout([string]$Why) {
         $script:TShow = $script:Clock.ElapsedMilliseconds
+        if ($script:Form.Visible -and $script:Form.Passive) { Enter-PanelActive $Why; return }
+        $script:Form.SetPassive($false)
         Set-FlyoutBounds
         $script:Form.Show()
         $script:Form.Activate()
@@ -672,8 +834,39 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
         if ($script:Queue) { $script:Queue = $null; Send-Queue }
         Send-ToPage @{ type = 'hidden' }
         $script:Form.Hide()
+        $script:Form.SetPassive($false)
         $script:LastHideAt = [DateTime]::UtcNow
         if ($script:Ready) { try { $script:Wv.CoreWebView2.MemoryUsageTargetLevel = 'Low' } catch { } }
+        if ($script:Meet.shown) {
+            Write-Log ('meeting: hidden after {0:0} s, {1} height updates ({2})' -f ($script:LastHideAt - $script:Meet.shownAt).TotalSeconds, $script:Meet.heights, $Why)
+            if (Test-DeskMeetingMute $Why $true) {
+                $script:MeetMutedUntil = $script:LastHideAt.AddSeconds($meetMuteSeconds)
+                Write-Log "meeting: muted for $meetMuteSeconds s"
+            }
+            $script:Meet = @{ shown = $false }
+        }
+    }
+
+    function script:Show-FlyoutPassive {
+        # The meeting panel: shown without activation, on top, keys stay with the window in front.
+        $script:TShow = $script:Clock.ElapsedMilliseconds
+        $script:Form.SetPassive($true)
+        Set-FlyoutBounds -Primary
+        $script:Form.Show()
+        try { $script:Wv.CoreWebView2.MemoryUsageTargetLevel = 'Normal' } catch { }
+        Send-ToPage @{ type = 'shown'; passive = $true }
+        Send-State
+    }
+
+    function script:Enter-PanelActive([string]$Why) {
+        # A click in the meeting panel, or on the tray icon, makes it a normal panel: active, keys go to it,
+        # it hides on focus lost and no longer by itself.
+        $script:Form.SetPassive($false)
+        $script:Form.Activate()
+        $ok = [DeskNative]::SetForegroundWindow($script:Form.Handle)
+        try { $null = $script:Wv.Focus() } catch { }
+        Send-ToPage @{ type = 'activated' }
+        Write-Log ('meeting: panel taken over ({0}), {1}' -f $Why, $(if ($ok) { 'in front' } else { 'Windows refused the front' }))
     }
 
     function script:Invoke-Later([int]$Ms, [scriptblock]$Action) {
@@ -709,7 +902,9 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
         if ($e.Button -ne 'Left') { return }
         # The mouse-down on the taskbar already hid the panel (focus lost); the same click must not reopen it.
         if (([DateTime]::UtcNow - $script:LastHideAt).TotalMilliseconds -lt 300) { return }
-        if ($script:Form.Visible) { Hide-Flyout 'tray click' } else { Show-Flyout 'tray click' }
+        # A click while the meeting panel waits unclicked takes it over instead of hiding it.
+        if ($script:Form.Visible -and $script:Form.Passive) { Enter-PanelActive 'tray click' }
+        elseif ($script:Form.Visible) { Hide-Flyout 'tray click' } else { Show-Flyout 'tray click' }
     })
     $script:Tray.Visible = $true
 
@@ -792,6 +987,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
             Write-Log "hello: $($script:HelloStats.sent) sent, $($script:HelloStats.failed) failed in 10 min"
             $script:HelloStats = @{ sent = 0; failed = 0; since = $now }
         }
+        if ($script:Meet.shown) { try { Step-Meeting $now } catch { Write-Log "ERROR meeting: $($_.Exception.Message)" } }
         if ($script:Upd.enabled) { try { Step-Update $now } catch { Write-Log "ERROR update: $($_.Exception.Message)"; $script:Upd.worker = $null } }
         # Mark the height stale once, when the pushes stop.
         $stale = ($null -ne $script:Desk) -and (([DateTime]::UtcNow - $script:LastPushAt).TotalSeconds -gt $StaleSeconds)
@@ -800,6 +996,10 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
     })
     $tick.Start()
 
+    # The page is loaded now, hidden, so the meeting panel can show at once (Get-DeskMeetingAction skips it while
+    # the page is not ready). If this fails, the page is created on the first open, as before.
+    try { $script:Form.CreateControl(); New-WebView }
+    catch { Write-Log "ERROR page at start: $($_.Exception.Message) (created on the first open)" }
     Write-Log "start: version=$AppVersion WebView2 Runtime $rt, listener=$([bool]$script:Listener), updates=$($script:Upd.enabled)"
     Send-Hello
     try { [System.Windows.Forms.Application]::Run() }

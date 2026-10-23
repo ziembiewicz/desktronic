@@ -101,6 +101,8 @@ const STEP = 0.5;         // ▼▲ and the dial change the number by this much;
 let state = { h: null, status: "", presets: [], locked: false, stale: true, offline: false };
 let queue = { goto: 0, preset: 0 };
 let editing = false;       // the field holds a typed height; otherwise it follows the desk
+// Shown by itself for a meeting and not clicked yet: no focus, keys ignored; the first click makes it a normal panel.
+let passive = false;
 
 // A press lights the button for at least 180 ms, so even a quick tap is seen.
 function flash(el, cls = "press", ms = 180) {
@@ -179,8 +181,13 @@ if (wv) wv.addEventListener("message", e => {
     if (m.kind === "goto") flash($("tv"), "bad", 600);
   } else if (m.type === "shown") {
     const p = $("p"); p.classList.remove("in"); void p.offsetWidth; p.classList.add("in");
+    passive = !!m.passive;
+    if (!passive) $("tv").focus();
+  } else if (m.type === "activated") {
+    passive = false;
     $("tv").focus();
   } else if (m.type === "hidden") {
+    passive = false;
     endEdit();
   }
 });
@@ -200,10 +207,13 @@ $("stop").addEventListener("pointerdown", () => flash($("stop")));
 $("stop").addEventListener("click", () => { endEdit(); send({ type: "stop" }); });
 $("hide").addEventListener("click", () => send({ type: "hide" }));
 $("gear").addEventListener("click", () => { if ($("gear").classList.contains("upd")) send({ type: "update" }); });
+// A click anywhere in the meeting panel (before the button under it acts) tells PowerShell to make it active.
+document.addEventListener("pointerdown", () => { if (passive) { passive = false; send({ type: "activate" }); } }, true);
 // Keys while the panel is open and active: arrows or F13/F14 change the number (a keyboard dial can send
 // these, one key per notch), Enter goes, F15 = stop, Esc drops the typed height, or hides the panel.
 const KEYS = { ArrowUp: "up", F13: "up", ArrowDown: "down", F14: "down" };
 window.addEventListener("keydown", e => {
+  if (passive) { e.preventDefault(); return; }
   if (KEYS[e.key]) {
     e.preventDefault();
     flash($(KEYS[e.key]));

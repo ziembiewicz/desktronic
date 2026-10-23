@@ -5,6 +5,8 @@
 #   desk_panel_push_token: <random, at least 24 bytes>     <- the same value as push_token on the PC
 # The token travels in plain HTTP inside the LAN; the PC also accepts pushes only from Home Assistant's
 # address (Windows firewall rule, windows/desk-tray/Set-DeskTrayFirewall.ps1).
+# "meeting" is "warn" or "go" only in the push desk_panel_meeting sends when the meeting reminder accepted that
+# step (the panel then shows by itself); empty in every other push. A panel older than that ignores it.
 # "api" is the version of this Home Assistant side of the panel. Raise it when the payload or the panel
 # commands change; a PC release that needs a newer one is refused by the updater (windows/pc-manifest.json).
 # Replace biurko_xxxxxx with your desk's entity prefix.
@@ -24,5 +26,6 @@ desk_panel_push:
         "locked": states('input_boolean.desk_panel_locked'),
         "seq": seq | default(0) | int(0),
         "result": result | default(''),
-        "api": 1} | tojson }}
+        "meeting": meeting | default(''),
+        "api": 2} | tojson }}
   timeout: 2

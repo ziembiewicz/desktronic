@@ -1,8 +1,10 @@
 # Meeting reminder from the PC: windows/meeting-reminder.ps1 posts {"step":"warn"} 30 s before a
-# meeting and {"step":"go"} at its start. The PC keeps the time; this automation keeps no schedule
-# and only moves the desk:
+# meeting and {"step":"go"} 15 s before it (GoLeadSeconds). The PC keeps the time; this automation keeps
+# no schedule and only moves the desk:
 #   warn -> one nudge (script.desk_nudge)
 #   go   -> two nudges, a 3 s pause, then memory preset M3 (set it to your standing height)
+# A step that passed the conditions first fires the event desk_meeting_step {step}: desk_panel_meeting
+# shows the desk panel on the PC with it. A step refused here (desk moving, already at M3...) fires nothing.
 # It never lowers the desk: it moves only when the desk is idle and below M3, and both heights are real
 # readings (for about 5 s after the board boots the height shows the 58 cm placeholder).
 # The webhook accepts POST from the local network only; its ID is kept outside the repository.
@@ -32,6 +34,10 @@ conditions:
     {{ is_number(h) and is_number(m3) and h | float > 58.0 and m3 | float >= 60
        and h | float < m3 | float - 0.5 }}
 actions:
+- event: desk_meeting_step
+  event_data:
+    step: "{{ trigger.json.step }}"
+  continue_on_error: true
 - if: "{{ trigger.json.step == 'warn' }}"
   then:
   - action: script.desk_nudge

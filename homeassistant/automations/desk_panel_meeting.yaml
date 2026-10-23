@@ -1,0 +1,35 @@
+# Shows the desk panel on the PC (windows/desk-tray) when the meeting reminder accepted a step: one push through
+# rest_command.desk_panel_push with "meeting": "warn" or "go". The panel shows without taking the focus and
+# shows the height while the desk rises; it hides by itself. It never moves the desk and changes no state here.
+# The event desk_meeting_step comes from desk_meeting_reminder, only for a step that passed its conditions.
+# Only while the PC said hello in the last 90 s, like desk_panel_push: a PC that is off gets nothing.
+# The step is sent once, so a lost push is tried once more after 2 s (the panel answers 204; any 2xx is success).
+# A step that arrives twice only restarts the panel's clock. mode: parallel, so warn and go never wait for each other.
+id: desk_panel_meeting
+alias: Desk - panel meeting
+description: Shows the PC desk panel without focus when the meeting reminder accepted warn or go.
+triggers:
+- trigger: event
+  event_type: desk_meeting_step
+conditions:
+- condition: template
+  value_template: "{{ trigger.event.data.step in ['warn', 'go'] }}"
+- condition: template
+  value_template: >-
+    {{ now().timestamp() - (state_attr('input_datetime.desk_panel_last_hello', 'timestamp') | float(0)) < 90 }}
+actions:
+- action: rest_command.desk_panel_push
+  data:
+    meeting: "{{ trigger.event.data.step }}"
+  response_variable: push
+  continue_on_error: true
+- if: "{{ push is not defined or push.status is not defined or not (200 <= push.status | int(0) < 300) }}"
+  then:
+  - delay:
+      seconds: 2
+  - action: rest_command.desk_panel_push
+    data:
+      meeting: "{{ trigger.event.data.step }}"
+    continue_on_error: true
+mode: parallel
+max: 4
