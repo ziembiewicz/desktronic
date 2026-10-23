@@ -26,7 +26,11 @@ html,body{margin:0;height:100%;overflow:hidden;background:#202227;color:#e8eaee;
 #st{font-size:13px;color:#b9c0cb}
 .ib{width:28px;height:24px;border-radius:5px;display:flex;align-items:center;justify-content:center;color:#a8aeb8;font-size:14px}
 .ib:hover{background:rgba(255,255,255,.07)}
-#gear{opacity:.35}
+#gear{opacity:.35;position:relative}
+#gear.upd{opacity:1;color:#ffb020;cursor:pointer}
+#gear.upd::after{content:"";position:absolute;top:2px;right:3px;width:7px;height:7px;border-radius:50%;background:#ffb020;box-shadow:0 0 6px #ffb020}
+#gear.busy{animation:pulse 1s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.4}}
 .lcd{position:relative;flex-shrink:0;border-radius:8px;background:linear-gradient(180deg,#0b0c0e 0%,#050506 100%);border:1px solid #000;
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.04);padding:18px 14px 16px 22px;display:flex;align-items:center;gap:6px;overflow:hidden}
 .gl{position:absolute;inset:0;background:linear-gradient(115deg,rgba(255,255,255,.07) 0%,rgba(255,255,255,0) 32%);pointer-events:none}
@@ -160,6 +164,12 @@ if (wv) wv.addEventListener("message", e => {
   } else if (m.type === "queue") {
     queue = { goto: m.goto || 0, preset: m.preset || 0 };
     paint();
+  } else if (m.type === "update") {
+    // An update on offer: the gear gets an amber dot; a click asks (the question comes from PowerShell).
+    const g = $("gear");
+    g.classList.toggle("upd", !!m.tag);
+    g.classList.toggle("busy", !!m.busy);
+    g.title = m.tag ? "Aktualizacja: " + m.tag : "Ustawienia (jeszcze nie ma)";
   } else if (m.type === "refused") {
     // A height out of range or a preset the desk is already at: a short red flash, no text.
     if (m.kind === "goto") flash($("tv"), "bad", 600);
@@ -185,6 +195,7 @@ for (const id of ["up", "down", "go"]) $(id).addEventListener("mousedown", e => 
 $("stop").addEventListener("pointerdown", () => flash($("stop")));
 $("stop").addEventListener("click", () => { endEdit(); send({ type: "stop" }); });
 $("hide").addEventListener("click", () => send({ type: "hide" }));
+$("gear").addEventListener("click", () => { if ($("gear").classList.contains("upd")) send({ type: "update" }); });
 // Keys while the panel is open and active: arrows or F13/F14 change the number (a keyboard dial can send
 // these, one key per notch), Enter goes, F15 = stop, Esc drops the typed height, or hides the panel.
 const KEYS = { ArrowUp: "up", F13: "up", ArrowDown: "down", F14: "down" };

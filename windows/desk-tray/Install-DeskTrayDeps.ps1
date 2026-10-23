@@ -13,10 +13,12 @@
                   license are kept.                                           -> lib\fonts\
                   (c) keshikan, SIL Open Font License 1.1, Reserved Font Name "DSEG".
   No admin rights needed. The WebView2 Runtime itself is part of Windows 11 and current Windows 10.
+  Writes lib\deps.json with the versions installed; the updater compares it with what a release needs.
+  The panel must not run while this replaces lib\ (its DLLs are loaded): use Exit in the tray menu first.
 
 .NOTES
-  PowerShell 7.4 or newer. Run from the folder that holds desk-tray.ps1:
-    pwsh.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-DeskTrayDeps.ps1
+  PowerShell 7.4 or newer. Run from the folder that holds desk-tray.ps1, or point -Root at the data folder:
+    pwsh.exe -NoProfile -ExecutionPolicy Bypass -File .\Install-DeskTrayDeps.ps1 [-Root "$env:LOCALAPPDATA\DeskTray"]
 #>
 #Requires -Version 7.4
 [CmdletBinding()]
@@ -93,6 +95,10 @@ try {
         $null = New-Item -ItemType Directory -Force -Path (Split-Path $dest -Parent)
         Move-Item -Path $pair[0] -Destination $dest
     }
+    $fontVersion = [regex]::Match($FontUrl, '/v([0-9.]+)/').Groups[1].Value
+    $deps = "webview2-$SdkVersion+dseg-$fontVersion"
+    Set-Content -Path (Join-Path $Root 'lib\deps.json') -Encoding UTF8 -Value (@{ deps = $deps } | ConvertTo-Json -Compress)
+    "deps: $deps"
     "OK -> $(Join-Path $Root 'lib')"
 }
 finally {

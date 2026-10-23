@@ -17,6 +17,12 @@
 #Requires -Version 7.4
 $ErrorActionPreference = 'Stop'
 
+# After Install-DeskApps.ps1 the task runs the starter (updates from signed releases); pointing it back at a
+# hand-copied script would switch updates off without a sign.
+if (Test-Path (Join-Path $env:LOCALAPPDATA 'DeskApps\launcher\Start-DeskApp.ps1')) {
+    throw 'The starter is installed (DeskApps): the task "desk-tray" already runs it. Nothing to do; see windows/launcher/README.md.'
+}
+
 $dir = Join-Path $env:LOCALAPPDATA 'DeskTray'
 $script = Join-Path $dir 'desk-tray.ps1'
 if (-not (Test-Path $script)) { throw "Not found: $script (see README.md, Install - PC)" }

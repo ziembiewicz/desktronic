@@ -121,6 +121,22 @@ Describe 'Get-DueStep' {
     }
 }
 
+Describe 'Get-QueueInfo' {
+    It 'is empty for an empty schedule' {
+        $q = Get-QueueInfo -Schedule ([System.Collections.ArrayList]::new())
+        $q.count | Should Be 0
+        $q.next | Should Be ''
+    }
+    It 'counts the meetings and names the earliest start' {
+        $s = [System.Collections.ArrayList]::new()
+        [void](Add-Meeting -Schedule $s -Start (New-Time 17 30) -Now (New-Time 16 46))
+        [void](Add-Meeting -Schedule $s -Start (New-Time 17 0) -Now (New-Time 16 46))
+        $q = Get-QueueInfo -Schedule $s
+        $q.count | Should Be 2
+        ([datetime]::Parse($q.next)) | Should Be (New-Time 17 0)
+    }
+}
+
 Describe 'Test-Blocker' {
     It 'matches a blocker word in the title' {
         Test-Blocker -Title 'Blocker' -Words @('Blocker') | Should Be $true

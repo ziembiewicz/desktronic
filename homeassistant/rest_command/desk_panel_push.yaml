@@ -5,6 +5,8 @@
 #   desk_panel_push_token: <random, at least 24 bytes>     <- the same value as push_token on the PC
 # The token travels in plain HTTP inside the LAN; the PC also accepts pushes only from Home Assistant's
 # address (Windows firewall rule, windows/desk-tray/Set-DeskTrayFirewall.ps1).
+# "api" is the version of this Home Assistant side of the panel. Raise it when the payload or the panel
+# commands change; a PC release that needs a newer one is refused by the updater (windows/pc-manifest.json).
 # Replace biurko_xxxxxx with your desk's entity prefix.
 desk_panel_push:
   url: !secret desk_panel_push_url
@@ -21,5 +23,6 @@ desk_panel_push:
               states('sensor.biurko_xxxxxx_desk_m4_height')],
         "locked": states('input_boolean.desk_panel_locked'),
         "seq": seq | default(0) | int(0),
-        "result": result | default('')} | tojson }}
+        "result": result | default(''),
+        "api": 1} | tojson }}
   timeout: 2

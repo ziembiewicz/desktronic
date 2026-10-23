@@ -41,12 +41,17 @@
       "apps": ["Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe!App"],
       "blocker_words": ["Blocker"] }
   "blocker_words" missing or null means ["Blocker"]; [] turns blockers off. ASCII words only.
-  Log: meeting-reminder.log next to this script (UTF-8, rotated at 512 KB). It never contains titles
-  or blocker words, only their count.
+  Log: meeting-reminder.log in -DataDir (default: next to this script; UTF-8, rotated at 512 KB). It never
+  contains titles or blocker words, only their count.
+  queue.json in -DataDir: {"count": n, "next": "<start of the next meeting>"} whenever the schedule changes, so
+  the starter (windows/launcher/Start-DeskApp.ps1) restarts this script for an update only when no meeting
+  waits: a restart forgets the meetings in memory. No titles, only times.
   Install: see windows/README.md.
 #>
 param(
-    [string]$ConfigPath = (Join-Path $PSScriptRoot 'config.json'),
+    [string]$DataDir = $PSScriptRoot,
+    [string]$ConfigPath = '',
+    [string]$AppVersion = 'manual',
     [int]$PollSeconds = 2,
     [int]$WarnLeadSeconds = 30,
     [int]$GoLeadSeconds = 15,
@@ -54,7 +59,9 @@ param(
     [int]$LateSeconds = 10
 )
 
-$logPath = Join-Path $PSScriptRoot 'meeting-reminder.log'
+if (-not $ConfigPath) { $ConfigPath = Join-Path $DataDir 'config.json' }
+$logPath = Join-Path $DataDir 'meeting-reminder.log'
+$queuePath = Join-Path $DataDir 'queue.json'
 $logMaxBytes = 512KB
 $defaultApps = @('Microsoft.MicrosoftEdge.Stable_8wekyb3d8bbwe!App')
 
@@ -148,6 +155,25 @@ function Get-DueStep {
     }
 }
 
+function Get-QueueInfo {
+    # What waits in the schedule, for queue.json: the number of meetings and the start of the next one.
+    param([System.Collections.ArrayList]$Schedule)
+    $next = $null
+    foreach ($e in $Schedule) { if ($null -eq $next -or $e.Start -lt $next) { $next = $e.Start } }
+    [pscustomobject]@{ count = $Schedule.Count; next = $(if ($next) { $next.ToString('o') } else { '' }) }
+}
+
+function Write-QueueFile {
+    # Written to a temporary file first and then moved, so the starter never reads half a file.
+    param($Info)
+    try {
+        $tmp = "$queuePath.tmp"
+        [IO.File]::WriteAllText($tmp, ($Info | ConvertTo-Json -Compress))
+        Move-Item -Force -Path $tmp -Destination $queuePath
+    }
+    catch { Write-Log "ERROR queue.json: $($_.Exception.Message)" }
+}
+
 function Stop-OlderInstance {
     # The newest copy wins, so an upgraded script replaces the old one instead of running beside it.
     $scriptName = Split-Path -Leaf $PSCommandPath
@@ -216,12 +242,13 @@ function Start-Main {
     $listT = [System.Collections.Generic.IReadOnlyList[Windows.UI.Notifications.UserNotification]]
     $toastKind = [Windows.UI.Notifications.NotificationKinds]::Toast
     $generic = [Windows.UI.Notifications.KnownNotificationBindings]::ToastGeneric
-    Write-Log "start: access=$access apps=$($apps -join ',') poll=${PollSeconds}s warn=${WarnLeadSeconds}s go=-${GoLeadSeconds}s maxlead=${MaxLeadMinutes}min blockers=$($blockerWords.Count)"
+    Write-Log "start: version=$AppVersion access=$access apps=$($apps -join ',') poll=${PollSeconds}s warn=${WarnLeadSeconds}s go=-${GoLeadSeconds}s maxlead=${MaxLeadMinutes}min blockers=$($blockerWords.Count)"
 
     $schedule = [System.Collections.ArrayList]::new()
     $seen = @{}
     $lastError = $null
     $lastAccess = $access
+    $lastQueue = ''
 
     while ($true) {
         try {
@@ -264,6 +291,9 @@ function Start-Main {
                 }
                 else { Write-Log ('{0} T0={1:HH:mm} (late)' -f $d.Step, $d.Start) }
             }
+            $q = Get-QueueInfo -Schedule $schedule
+            $qText = "$($q.count) $($q.next)"
+            if ($qText -ne $lastQueue) { Write-QueueFile $q; $lastQueue = $qText }
             $lastError = $null
         }
         catch {
