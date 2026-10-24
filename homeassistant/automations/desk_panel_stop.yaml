@@ -6,6 +6,9 @@
 # 0.5 cm). During a "go to height" or preset move it ignored stop in 3 of 3 tries: the handset is the only
 # reliable stop. mode: single plus the 2 s pause keeps a burst of clicks to one stop every ~2.3 s.
 # With input_boolean.desk_panel_dry_run not exactly "off" the stop only goes to the logbook.
+# Inside the meeting window (see desk_meeting_reminder) the stop also cancels the raise: it writes the time into
+# input_datetime.desk_meeting_cancelled_at. The stop frames go first and exactly as before, so a missing or
+# broken helper can never keep the stop from going out.
 # Replace biurko_xxxxxx with your desk's entity prefix and DESK_PANEL_STOP_WEBHOOK_ID with a random ID.
 id: desk_panel_stop
 alias: Desk - panel stop
@@ -33,6 +36,15 @@ actions:
   - action: button.press
     target:
       entity_id: button.biurko_xxxxxx_desk_stop
+- if: >-
+    {{ now().timestamp() - state_attr('input_datetime.desk_meeting_window_at', 'timestamp') | float(0) < 60 }}
+  then:
+  - action: input_datetime.set_datetime
+    target:
+      entity_id: input_datetime.desk_meeting_cancelled_at
+    data:
+      timestamp: "{{ now().timestamp() }}"
+    continue_on_error: true
 - delay:
     seconds: 2
 mode: single

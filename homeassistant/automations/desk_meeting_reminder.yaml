@@ -7,6 +7,13 @@
 # shows the desk panel on the PC with it. A step refused here (desk moving, already at M3...) fires nothing.
 # It never lowers the desk: it moves only when the desk is idle and below M3, and both heights are real
 # readings (for about 5 s after the board boots the height shows the 58 cm placeholder).
+# Cancel: an accepted warn opens a 60 s window (input_datetime.desk_meeting_window_at). The red stop or Cancel
+# in the PC panel (desk_panel_stop), or a move the panel sent (desk_panel_cmd), writes the time into
+# input_datetime.desk_meeting_cancelled_at while the window is open. go checks it twice: at the start (then it
+# does nothing, fires no event, no nudge) and after the nudges, right before M3 (then M3 is not pressed). A go
+# without an accepted warn opens the window itself, so a stop during its nudges still keeps M3 unpressed.
+# Once the desk drives to M3 only the handset stops it. The handset does not cancel: Home Assistant cannot
+# tell it from its own commands. Times are compared through the helpers' timestamp attribute only.
 # The webhook accepts POST from the local network only; its ID is kept outside the repository.
 # Replace biurko_xxxxxx with your desk's entity prefix and MEETING_REMINDER_WEBHOOK_ID with a random ID.
 id: desk_meeting_reminder
@@ -34,35 +41,99 @@ conditions:
     {{ is_number(h) and is_number(m3) and h | float > 58.0 and m3 | float >= 60
        and h | float < m3 | float - 0.5 }}
 actions:
-- event: desk_meeting_step
-  event_data:
-    step: "{{ trigger.json.step }}"
-  continue_on_error: true
 - if: "{{ trigger.json.step == 'warn' }}"
   then:
+  - action: input_datetime.set_datetime
+    target:
+      entity_id: input_datetime.desk_meeting_window_at
+    data:
+      timestamp: "{{ now().timestamp() }}"
+    continue_on_error: true
+  - event: desk_meeting_step
+    event_data:
+      step: warn
+    continue_on_error: true
   - action: script.desk_nudge
     data:
       count: 1
-  else:
-  - action: script.desk_nudge
+  - stop: warn
+# go. The same check twice (cancelled = window open and a cancel written after it opened); a template, not a
+# variable, so the second check reads the helpers again.
+- if: >-
+    {% set w = state_attr('input_datetime.desk_meeting_window_at', 'timestamp') | float(0) %}
+    {% set c = state_attr('input_datetime.desk_meeting_cancelled_at', 'timestamp') | float(0) %}
+    {{ now().timestamp() - w < 60 and c > w }}
+  then:
+  - action: logbook.log
     data:
-      count: 2
-  - delay:
-      seconds: 3
-  - action: button.press
+      name: Desk meeting
+      message: meeting raise cancelled
+      entity_id: input_datetime.desk_meeting_cancelled_at
+  - action: input_datetime.set_datetime
     target:
-      entity_id: button.biurko_xxxxxx_desk_m3
-  - delay:
-      seconds: 15
-  - if: >-
-      {{ (states('sensor.biurko_xxxxxx_desk_height') | float(0)
-          - states('sensor.biurko_xxxxxx_desk_m3_height') | float(0)) | abs > 0.5 }}
-    then:
-    - action: persistent_notification.create
-      data:
-        title: Desk did not reach M3
-        message: >-
-          Meeting reminder pressed M3, but the desk is at
-          {{ states('sensor.biurko_xxxxxx_desk_height') }} cm
-          (M3 = {{ states('sensor.biurko_xxxxxx_desk_m3_height') }} cm).
+      entity_id: input_datetime.desk_meeting_window_at
+    data:
+      timestamp: "{{ now().timestamp() - 3600 }}"
+    continue_on_error: true
+  - stop: cancelled
+# No accepted warn in the last 60 s: open the window now. An open window is left as it is, so a cancel written
+# after warn is not lost.
+- if: >-
+    {{ now().timestamp() - state_attr('input_datetime.desk_meeting_window_at', 'timestamp') | float(0) >= 60 }}
+  then:
+  - action: input_datetime.set_datetime
+    target:
+      entity_id: input_datetime.desk_meeting_window_at
+    data:
+      timestamp: "{{ now().timestamp() }}"
+    continue_on_error: true
+- event: desk_meeting_step
+  event_data:
+    step: go
+  continue_on_error: true
+- action: script.desk_nudge
+  data:
+    count: 2
+- delay:
+    seconds: 3
+- if: >-
+    {% set w = state_attr('input_datetime.desk_meeting_window_at', 'timestamp') | float(0) %}
+    {% set c = state_attr('input_datetime.desk_meeting_cancelled_at', 'timestamp') | float(0) %}
+    {{ now().timestamp() - w < 60 and c > w }}
+  then:
+  - action: logbook.log
+    data:
+      name: Desk meeting
+      message: meeting raise stopped before M3
+      entity_id: input_datetime.desk_meeting_cancelled_at
+  - action: input_datetime.set_datetime
+    target:
+      entity_id: input_datetime.desk_meeting_window_at
+    data:
+      timestamp: "{{ now().timestamp() - 3600 }}"
+    continue_on_error: true
+  - stop: cancelled before M3
+# Close the window before M3: a stop from now on is a plain stop again.
+- action: input_datetime.set_datetime
+  target:
+    entity_id: input_datetime.desk_meeting_window_at
+  data:
+    timestamp: "{{ now().timestamp() - 3600 }}"
+  continue_on_error: true
+- action: button.press
+  target:
+    entity_id: button.biurko_xxxxxx_desk_m3
+- delay:
+    seconds: 15
+- if: >-
+    {{ (states('sensor.biurko_xxxxxx_desk_height') | float(0)
+        - states('sensor.biurko_xxxxxx_desk_m3_height') | float(0)) | abs > 0.5 }}
+  then:
+  - action: persistent_notification.create
+    data:
+      title: Desk did not reach M3
+      message: >-
+        Meeting reminder pressed M3, but the desk is at
+        {{ states('sensor.biurko_xxxxxx_desk_height') }} cm
+        (M3 = {{ states('sensor.biurko_xxxxxx_desk_m3_height') }} cm).
 mode: single
