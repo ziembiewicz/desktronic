@@ -25,6 +25,10 @@
 # after the first live test (2026-10-21): 6 s / 4 per 2 min / 20 s made the panel feel dead.
 # Every command except hello ends with the event desk_panel_result {seq, result}: "ok" or the refusal.
 # desk_panel_push sends it to the panel, which keeps a move refused for now queued and retries it quietly.
+# A move accepted inside the meeting window (see desk_meeting_reminder) cancels the raise: it writes the time into
+# input_datetime.desk_meeting_cancelled_at. Right after that the reminder is checked once more: a go that started
+# after the guards were read gets the move refused as busy, so the panel and the reminder never move the desk
+# at the same time. A refused command cancels nothing. In dry run an accepted command cancels too.
 #
 # With input_boolean.desk_panel_dry_run not exactly "off", moves are only written to the logbook. In dry run
 # the request may carry "test": {"h": <height>, "busy": true, "boot_age": <seconds>} to try every refusal
@@ -117,6 +121,24 @@ actions:
     event_data:
       seq: "{{ seq }}"
       result: "{{ reason | trim }}"
+  - stop: refused
+# Accepted: inside the meeting window this move cancels the raise.
+- if: >-
+    {{ now().timestamp() - state_attr('input_datetime.desk_meeting_window_at', 'timestamp') | float(0) < 60 }}
+  then:
+  - action: input_datetime.set_datetime
+    target:
+      entity_id: input_datetime.desk_meeting_cancelled_at
+    data:
+      timestamp: "{{ now().timestamp() }}"
+    continue_on_error: true
+# A go that started after reason was read: refuse as busy (the panel retries quietly), never move together.
+- if: "{{ state_attr('automation.desk_meeting_reminder', 'current') | int(0) > 0 }}"
+  then:
+  - event: desk_panel_result
+    event_data:
+      seq: "{{ seq }}"
+      result: busy
   - stop: refused
 # Book the move before it starts, so a second command queued behind this one sees it.
 - action: input_text.set_value

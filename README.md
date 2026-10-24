@@ -79,8 +79,19 @@ as a Windows notification. Calendar blockers stay put: a reminder whose title co
   2. Script `desk_nudge` (`scripts/desk_nudge.yaml`) — add it to `scripts.yaml`.
   3. Automation `desk_meeting_reminder` (`automations/desk_meeting_reminder.yaml`) — add it to
      `automations.yaml` with a random webhook ID (for example `openssl rand -hex 16`).
+  4. With the desk panel only: helpers **Desk meeting window at** and **Desk meeting cancelled at**
+     (`helpers/desk_meeting.yaml`, Date and time) — create them before the automation; they let the panel cancel
+     the raise (below).
 
-  In all three files replace `biurko_xxxxxx` with your desk's entity prefix.
+  In all these files replace `biurko_xxxxxx` with your desk's entity prefix.
+
+**Cancel a raise** from the [desk panel](#desk-panel-in-the-windows-tray-optional): the red stop or **Cancel** in
+the tray menu, or a height or preset you send from the panel, between the first nudge and the moment the desk
+starts for M3. Before go the desk then stays where it is (no go nudges, no M3); during the go nudges M3 is not
+pressed. Once the desk drives to M3, only the handset stops it. The handset does not cancel the raise: lowered
+by hand and standing still at go, the desk still rises to M3 (moved to M3 or higher, or still moving, it does
+not). The logbook says `meeting raise cancelled` or `meeting raise stopped before M3`; the panel shows nothing
+extra.
 
 The desk only ever moves **up**: nothing happens when it is already at M3 or higher, while it is moving, when
 the switch is off, or right after the board boots (placeholder height). If the PC sleeps or the script stops,
