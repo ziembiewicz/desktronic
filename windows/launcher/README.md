@@ -31,7 +31,7 @@ same `v<N>`.
 
 ```json
 { "requires": { "launcher": 2, "pwsh": "7.4", "deps": "webview2-1.0.4258.31+dseg-0.46",
-                "listen": "http://+:8765/desk/", "ha_api": 1,
+                "listen": "http://+:8765/desk/", "ha_api": 3,
                 "config_keys": { "desk-tray": ["panel_webhook_url", "panel_stop_webhook_url", "push_token"],
                                  "meeting-reminder": ["reminder_webhook_url"] } } }
 ```

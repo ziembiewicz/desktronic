@@ -1,5 +1,5 @@
 # Pushes the desk state to the panel on the PC (windows/desk-tray) through rest_command.desk_panel_push:
-# on every change of height, status, presets or the lock, every 30 s, on the PC's hello and with the result
+# on every change of height, status, presets, the lock or dry run, every 30 s, on the PC's hello and with the result
 # of every panel command (desk_panel_result: seq + "ok" or the refusal).
 # Only while the PC said hello in the last 90 s: a PC that is off or asleep gets nothing, so the log does
 # not fill with timeouts. The push carries display data only; no command ever uses a height from the PC.
@@ -19,6 +19,7 @@ triggers:
   - sensor.biurko_xxxxxx_desk_m3_height
   - sensor.biurko_xxxxxx_desk_m4_height
   - input_boolean.desk_panel_locked
+  - input_boolean.desk_panel_dry_run
 - trigger: time_pattern
   seconds: /30
 - trigger: event

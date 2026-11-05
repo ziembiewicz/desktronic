@@ -16,6 +16,8 @@
   height or preset replaces the queued one. An item that could not go out within 20 s is dropped, and hiding the panel
   empties the queue: the desk never moves on its own while nobody looks at the panel.
   The control box ignores stop during a move it runs itself: the handset is the only reliable stop.
+  When dry run or the lock is on (push fields "dry", "locked"), the page shows a bar with a button: dry run off
+  ({"cmd":"dry_off"}, sent once nothing is in flight) or unlock ({"cmd":"unlock"}, after a confirmation in the page).
 
   Meetings: when the meeting reminder's warn or go was accepted by Home Assistant, a push carries
   "meeting": "warn" or "go" (homeassistant/automations/desk_panel_meeting.yaml). A hidden panel then shows by
@@ -129,10 +131,13 @@ function ConvertTo-DeskNumber {
 }
 
 function ConvertFrom-DeskPush {
-    # Validates a push from Home Assistant: {"h","status","m":[4],"locked","seq","result","api","meeting"}. Unknown
+    # Validates a push from Home Assistant: {"h","status","m":[4],"locked","dry","seq","result","api","meeting"}. Unknown
     # values are dropped, never passed to the page as they came. "api" is the version of the Home Assistant side of
     # the panel (0 when missing); an update that needs a newer one is refused. "meeting" is the meeting reminder's
     # step that Home Assistant just accepted ("warn" or "go"), empty in every other push.
+    # "lock" and "dry" keep the helpers' state for the panel's bar: "on", "off" or "other" (unknown, unavailable,
+    # anything else). "dry" is $null when the push has no such field (Home Assistant side older than api 3).
+    # "locked" stays true for anything but "off", as the red light always showed it.
     param([string]$Json)
     try { $p = $Json | ConvertFrom-Json } catch { return $null }
     if ($null -eq $p -or $p -isnot [pscustomobject]) { return $null }
@@ -151,11 +156,15 @@ function ConvertFrom-DeskPush {
     $api = 0
     $null = [int]::TryParse([string]$p.api, [ref]$api)
     $meeting = if ($p.meeting -is [string] -and $p.meeting -in 'warn', 'go') { $p.meeting } else { '' }
+    $onOff = { param($v) if ($v -is [string] -and ($v -ceq 'on' -or $v -ceq 'off')) { $v } else { 'other' } }
+    $dry = if ($p.PSObject.Properties['dry']) { & $onOff $p.dry } else { $null }
     [pscustomobject]@{
         h       = ConvertTo-DeskNumber $p.h
         status  = $status
         presets = $presets
         locked  = ([string]$p.locked -ne 'off')
+        lock    = (& $onOff $p.locked)
+        dry     = $dry
         seq     = $seq
         result  = $result
         api     = [math]::Max($api, 0)
@@ -483,6 +492,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
     $script:StaleShown = $false
     $script:Queue = $null                        # the one press waiting to go out (Add-DeskPress)
     $script:InFlight = $null                     # @{ seq; item; at } sent, no result yet
+    $script:DryOffWanted = $false                 # "Turn off" dry run clicked: sent once nothing is in flight
     $script:Seq = 0
     $script:LastSendFailedAt = [DateTime]::MinValue  # red light on the panel for 30 s after a failed send
     $script:ExitCode = 0                          # 3 = restart for an update (the starter applies it)
@@ -514,6 +524,7 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
             type = 'state'; stale = $stale; offline = $offline
             h = $(if ($d) { $d.h } else { $null }); status = $(if ($d) { $d.status } else { '' })
             presets = $(if ($d) { @($d.presets) } else { @() }); locked = $(if ($d) { $d.locked } else { $false })
+            lock = $(if ($d) { $d.lock } else { '' }); dry = $(if ($d) { $d.dry } else { $null }); api = $script:HaApi
         }
     }
 
@@ -735,6 +746,19 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
                     $script:Queue = $null; $script:InFlight = $null
                     Stop-Desk 'red button'
                     Send-Queue
+                }
+                'dry_off' {
+                    # Nothing clicked during dry run may move the desk after it: the queue goes now, and dry_off
+                    # waits for the result of a command already sent (the timer sends it, 6 s at most).
+                    $script:Queue = $null
+                    $script:DryOffWanted = $true
+                    Write-Log 'dry run off (panel button)'
+                    Send-Queue
+                }
+                'unlock' {
+                    # Only after the confirmation in the page; Home Assistant unlocks only while the desk stands.
+                    Write-Log 'unlock (panel button, confirmed)'
+                    Send-Webhook 'cmd' @{ cmd = 'unlock'; seq = 0 }
                 }
                 default {
                     $script:Queue = Add-DeskPress $script:Queue $m ([DateTime]::UtcNow)
@@ -968,7 +992,11 @@ public class DarkMenuRenderer : ToolStripProfessionalRenderer {
             Write-Log "command dropped: $($script:InFlight.item.kind) (no result from Home Assistant)"
             $script:InFlight = $null; Send-Queue
         }
-        if (-not $script:InFlight) {
+        if ($script:DryOffWanted -and -not $script:InFlight) {
+            $script:DryOffWanted = $false
+            Send-Webhook 'cmd' @{ cmd = 'dry_off'; seq = 0 }
+        }
+        elseif (-not $script:InFlight) {
             $s = Get-DeskSend $script:Queue $now
             if ($s -and $s.drop) {
                 if ($s.why) { Write-Log "command dropped: $($script:Queue.kind) ($($s.why))" }
