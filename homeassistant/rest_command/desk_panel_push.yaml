@@ -7,6 +7,8 @@
 # address (Windows firewall rule, windows/desk-tray/Set-DeskTrayFirewall.ps1).
 # "meeting" is "warn" or "go" only in the push desk_panel_meeting sends when the meeting reminder accepted that
 # step (the panel then shows by itself); empty in every other push. A panel older than that ignores it.
+# "dry" is the state of input_boolean.desk_panel_dry_run as it is ("on", "off", "unknown"...): the panel shows a dry run
+# bar for anything but "off" (since api 3; an older panel ignores it).
 # "api" is the version of this Home Assistant side of the panel. Raise it when the payload or the panel
 # commands change; a PC release that needs a newer one is refused by the updater (windows/pc-manifest.json).
 # Replace biurko_xxxxxx with your desk's entity prefix.
@@ -24,8 +26,9 @@ desk_panel_push:
               states('sensor.biurko_xxxxxx_desk_m3_height'),
               states('sensor.biurko_xxxxxx_desk_m4_height')],
         "locked": states('input_boolean.desk_panel_locked'),
+        "dry": states('input_boolean.desk_panel_dry_run'),
         "seq": seq | default(0) | int(0),
         "result": result | default(''),
         "meeting": meeting | default(''),
-        "api": 2} | tojson }}
+        "api": 3} | tojson }}
   timeout: 2

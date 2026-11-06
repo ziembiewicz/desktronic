@@ -21,12 +21,12 @@
 .NOTES
   PowerShell 7.4 or newer, your normal account (no admin rights):
     pwsh.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\launcher\Install-DeskApps.ps1
-  -HaApi: the "api" the Home Assistant side already pushes (1 once desk_panel_push carries it).
+  -HaApi: the "api" the Home Assistant side already pushes (3 since the dry run and lock bar; deploy it first).
 #>
 #Requires -Version 7.4
 param(
     [string]$Root = (Join-Path $env:LOCALAPPDATA 'DeskApps'),
-    [int]$HaApi = 1
+    [int]$HaApi = 3
 )
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'DeskApps.psm1') -Force

@@ -2,6 +2,11 @@
 #   goto (h = cm)       go to the height typed in the panel; refused outside min + 0.3 .. max - 0.3
 #   preset (n = 1-4)    go to that preset's height
 #   hello               the PC is alive: Home Assistant pushes the height to it for the next 90 s
+#   dry_off             the panel's "Wyłącz" on the dry run bar: turns dry run off (only when it is exactly "on")
+#   unlock              the panel's "Zdejmij" after its confirmation ("I looked at the desk, no E13 on the handset"):
+#                       turns the lock off only while the desk stands: status Idle, a numeric height unchanged
+#                       for 3 s and the board up for 30 s (the same meaning of "stands" as the move guards).
+# dry_off and unlock change only helpers, never the desk, and work in dry run too: dry run is about moves.
 # Moves use "go to height". The only height the PC sends is the one typed in goto; it is checked here against
 # the desk's own minimum and maximum. Stop has its own automation (desk_panel_stop), so it never waits behind
 # a command.
@@ -23,7 +28,8 @@
 # The cause of E13 on this box is not known. What stays strict is what came before it: no command while the
 # desk moves or within 3 s after (busy), the motor duty cycle and the lock. The pacing limits were relaxed
 # after the first live test (2026-10-21): 6 s / 4 per 2 min / 20 s made the panel feel dead.
-# Every command except hello ends with the event desk_panel_result {seq, result}: "ok" or the refusal.
+# Every command except hello ends with the event desk_panel_result {seq, result}: "ok" or the refusal (dry_off and
+# unlock send seq 0 and "ok"; the panel watches the bar instead, and the logbook says why an unlock was refused).
 # desk_panel_push sends it to the panel, which keeps a move refused for now queued and retries it quietly.
 # A move accepted inside the meeting window (see desk_meeting_reminder) cancels the raise: it writes the time into
 # input_datetime.desk_meeting_cancelled_at. Right after that the reminder is checked once more: a go that started
@@ -47,7 +53,7 @@ conditions:
 - condition: template
   value_template: >-
     {{ trigger.json is mapping and trigger.json.get('cmd') in
-       ['goto', 'preset', 'hello'] }}
+       ['goto', 'preset', 'hello', 'dry_off', 'unlock'] }}
 actions:
 - if: "{{ trigger.json.cmd == 'hello' }}"
   then:
@@ -58,6 +64,63 @@ actions:
       timestamp: "{{ now().timestamp() }}"
   - event: desk_panel_hello
   - stop: hello
+# Dry run off: only from exactly "on" (a missing or unknown helper is left for a person in Home Assistant).
+# Moves booked during dry run stay in desk_panel_moves; clear that helper by hand after a long dry run test.
+- if: "{{ trigger.json.cmd == 'dry_off' }}"
+  then:
+  - if: "{{ is_state('input_boolean.desk_panel_dry_run', 'on') }}"
+    then:
+    - action: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.desk_panel_dry_run
+    - action: logbook.log
+      data:
+        name: Desk panel
+        message: dry run turned off from the panel
+        entity_id: input_boolean.desk_panel_dry_run
+  - event: desk_panel_result
+    event_data:
+      seq: 0
+      result: ok
+  - stop: dry_off
+# Unlock: only from exactly "on", and only while the desk stands. In dry run the request may carry
+# "test": {"busy": true} to try the refusal; a test can only refuse, never allow.
+- if: "{{ trigger.json.cmd == 'unlock' }}"
+  then:
+  - variables:
+      why: >-
+        {%- set hs = states.sensor.biurko_xxxxxx_desk_height -%}
+        {%- set boot = as_datetime(states('sensor.biurko_xxxxxx_esp32_uptime'), none) -%}
+        {%- set t = trigger.json.get('test') if states('input_boolean.desk_panel_dry_run') != 'off'
+                    and trigger.json.get('test') is mapping else {} -%}
+        {%- if t.get('busy', false) -%}test busy
+        {%- elif not is_state('sensor.biurko_xxxxxx_desk_status', 'Idle') -%}status {{ states('sensor.biurko_xxxxxx_desk_status') }}
+        {%- elif hs is none or not is_number(hs.state) -%}height {{ hs.state if hs is not none else 'missing' }}
+        {%- elif (now() - hs.last_changed).total_seconds() < 3 -%}height changed {{ (now() - hs.last_changed).total_seconds() | round(1) }} s ago
+        {%- elif boot is none or (now() - boot).total_seconds() < 30 -%}board just booted
+        {%- endif -%}
+  - if: "{{ is_state('input_boolean.desk_panel_locked', 'on') and why | trim == '' }}"
+    then:
+    - action: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.desk_panel_locked
+    - action: logbook.log
+      data:
+        name: Desk panel
+        message: unlocked from the panel after a look at the desk
+        entity_id: input_boolean.desk_panel_locked
+  - if: "{{ is_state('input_boolean.desk_panel_locked', 'on') and why | trim != '' }}"
+    then:
+    - action: logbook.log
+      data:
+        name: Desk panel
+        message: "unlock refused: {{ why | trim }}"
+        entity_id: input_boolean.desk_panel_locked
+  - event: desk_panel_result
+    event_data:
+      seq: 0
+      result: ok
+  - stop: unlock
 - variables:
     cmd: "{{ trigger.json.cmd }}"
     seq: "{{ trigger.json.get('seq', 0) | int(0) }}"

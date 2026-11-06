@@ -6,13 +6,15 @@
 
 # input_boolean.desk_panel_dry_run: on = commands only go to the logbook ("DRY ..."), the desk never moves.
 # The desk moves only when this helper is exactly "off"; unknown or missing counts as dry run.
+# The panel shows an amber bar while it is not "off"; its "Wyłącz" turns it off when it is exactly "on".
 - id: desk_panel_dry_run
   name: Desk panel dry run
   icon: mdi:test-tube
 
 # input_boolean.desk_panel_locked: on = the panel refuses every move. The command automation turns it on
 # when the box did not report a move within 4 s, or reported the wrong direction: on this control box an
-# ignored command came right before the E13 lock-up. Only a person turns it off, after a look at the desk.
+# ignored command came right before the E13 lock-up. Only a person turns it off, after a look at the desk: here, or
+# with the panel's "Zdejmij" and its confirmation (Home Assistant then unlocks only while the desk stands).
 - id: desk_panel_locked
   name: Desk panel locked
   icon: mdi:lock

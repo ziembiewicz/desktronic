@@ -10,12 +10,12 @@
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;overflow:hidden;background:#202227;color:#e8eaee;user-select:none;-webkit-user-select:none;
   font-family:"Segoe UI Variable","Segoe UI",system-ui,sans-serif}
-#p{height:100%;padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px}
+#p{position:relative;height:100%;padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px}
 #p.in{animation:slide .18s cubic-bezier(.1,.9,.2,1)}
 @keyframes slide{from{transform:translateY(14px);opacity:0}to{transform:none;opacity:1}}
 .hdr{display:flex;align-items:center;justify-content:space-between;padding:0 2px;height:24px}
 .hl{display:flex;align-items:center;gap:8px}
-/* Status lights under the height: exactly one is lit. green = ready, yellow = moving or a command waits,
+/* Status lights under the height: exactly one is lit. green = ready, yellow = moving, a command waits or dry run,
    red = locked, no data from Home Assistant or Home Assistant does not answer. */
 .leds{display:flex;gap:10px;margin-top:8px;padding-left:4px}
 .leds i{width:10px;height:10px;border-radius:50%;background:#1b1d21;box-shadow:inset 0 0 0 1px #3a3e46}
@@ -69,11 +69,33 @@ button{border:0;background:transparent;cursor:pointer;border-radius:8px;touch-ac
 .pb.on .ph{color:#7dffad;text-shadow:0 0 8px rgba(47,224,122,.7)}
 .pb.press .pn{color:#c9ffdd}
 .ph{font-family:ui-monospace,Consolas,monospace;font-size:11px;color:#a3abb8;letter-spacing:.04em}
-#stop{width:44px;height:52px;display:flex;align-items:center;justify-content:center}
+#stop{position:relative;z-index:11;width:44px;height:52px;display:flex;align-items:center;justify-content:center}
 #stop:hover{background:rgba(255,90,90,.1)}
 #stop.press{background:rgba(255,46,46,.4);box-shadow:0 0 18px rgba(255,46,46,.6)}
 .ring{position:relative;width:30px;height:30px;border-radius:50%;border:3px solid #ff5c5c;display:block;box-shadow:0 0 6px rgba(255,60,60,.9),0 0 16px rgba(255,46,46,.5),inset 0 0 6px rgba(255,60,60,.5)}
 .bar{position:absolute;left:50%;top:50%;width:3px;height:30px;background:#ff5c5c;transform:translate(-50%,-50%) rotate(45deg);box-shadow:0 0 6px rgba(255,60,60,.8)}
+/* The bar in place of the "Ustaw" row while the panel cannot move the desk: a big word on a block of colour.
+   amber = dry run, red = locked. Its button turns dry run off, or opens the unlock confirmation. */
+#bn{display:none;align-items:center;gap:10px;min-height:70px;border-radius:8px;padding:6px 8px 6px 16px}
+#bn.dry{background:#ffb020;color:#111}
+#bn.lock{background:#e53935;color:#fff}
+#bn.bad{box-shadow:0 0 0 3px #fff,0 0 18px rgba(255,255,255,.7)}
+.bt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;line-height:1.1}
+#b1{font-size:22px;font-weight:800;letter-spacing:.03em;white-space:nowrap}
+#b2{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#bb{height:52px;padding:0 18px;font-size:18px;font-weight:700;background:#111;color:#fff;flex-shrink:0}
+#bb:hover{background:#000}
+#bb.wait{opacity:.55;cursor:default}
+/* The unlock confirmation: covers the panel except the stop button (F15 works too). */
+#ov{position:absolute;inset:0;z-index:10;display:none;flex-direction:column;justify-content:space-between;
+  background:#0c0c0e;padding:14px 76px 14px 16px;border-radius:8px}
+#ov .q{font-size:19px;font-weight:700;color:#fff;line-height:1.3}
+#ov .row{display:flex;justify-content:space-between;margin-right:-60px}
+#ov button{height:52px;padding:0 22px;font-size:18px;font-weight:700;color:#fff}
+#ok{background:#e53935}
+#ok:disabled{opacity:.35;cursor:default}
+#no{background:#3a3e46}
+#ov button:focus-visible{outline:3px solid #fff;outline-offset:2px}
 </style>
 </head>
 <body><div id="p">
@@ -85,11 +107,14 @@ button{border:0;background:transparent;cursor:pointer;border-radius:8px;touch-ac
  <div class="sep"></div><div id="pr"></div>
  <button id="stop" title="Stop. Pewny stop w trakcie jazdy: pilot"><span class="ring"><span class="bar"></span></span></button>
 </div>
-<div class="set"><div class="lbl">Ustaw</div>
+<div class="set" id="set"><div class="lbl">Ustaw</div>
  <button class="ar" id="down" title="0,5 cm mniej (biurko stoi)">&#9660;</button>
  <input id="tv" inputmode="decimal" maxlength="6" spellcheck="false" autocomplete="off" title="Wysokość w cm; Enter albo ▶ jedzie, Esc wraca">
  <button class="ar" id="up" title="0,5 cm więcej (biurko stoi)">&#9650;</button>
  <button class="go" id="go" title="Jedź na tę wysokość (Enter)">&#9654;</button></div>
+<div id="bn"><div class="bt"><div id="b1"></div><div id="b2"></div></div><button id="bb"></button></div>
+<div id="ov"><div class="q">Obejrzałem biurko, na wyświetlaczu pilota nie ma E13 — zdejmij</div>
+ <div class="row"><button id="ok">Zdejmij</button><button id="no">Anuluj</button></div></div>
 </div>
 <script>
 "use strict";
@@ -98,11 +123,60 @@ const send = o => { if (wv) wv.postMessage(o); };
 const $ = id => document.getElementById(id);
 const STEP = 0.5;         // ▼▲ and the dial change the number by this much; the desk does not move
 // No messages: what waits is shown by lit buttons, a lock only by the red dot.
-let state = { h: null, status: "", presets: [], locked: false, stale: true, offline: false };
+let state = { h: null, status: "", presets: [], locked: false, lock: "", dry: null, api: 0, stale: true, offline: false };
 let queue = { goto: 0, preset: 0 };
 let editing = false;       // the field holds a typed height; otherwise it follows the desk
 // Shown by itself for a meeting and not clicked yet: no focus, keys ignored; the first click makes it a normal panel.
 let passive = false;
+let swallow = false;       // the click that only woke the meeting panel does not press the bar's button
+let pending = null;        // { act } after the bar's button: waits for the state to change, 10 s at most
+let pendingTimer = 0;
+let failUntil = 0;         // the bar shows "nie zdjęto" / "nie wyłączono" until then
+let overlay = false;       // the unlock confirmation is open
+let okTimer = 0;
+const PENDING_MS = 10000;  // dry_off may wait up to 6 s for a command in flight, then for Home Assistant
+const OK_DELAY_MS = 600;   // "Zdejmij" in the confirmation works only after this, so a double click cannot pass it
+
+// The bar, or null. Only on fresh data from an answering Home Assistant. A lock wins over dry run.
+// Buttons only when the Home Assistant side knows the commands (api 3) and the helper is exactly "on".
+function bar() {
+  if (state.stale || state.offline) return null;
+  const api3 = (state.api || 0) >= 3;
+  if (state.lock === "on" || state.lock === "other") {
+    const btn = api3 && state.lock === "on";
+    return { cls: "lock", act: "unlock", t1: "ZABLOKOWANY", btn: btn ? "Zdejmij" : "",
+             t2: state.lock !== "on" ? "sprawdź HA" : btn ? "panel nie ruszy biurka" : "zdejmij w HA" };
+  }
+  if (api3 && typeof state.dry === "string" && state.dry !== "off") {
+    const btn = state.dry === "on";
+    return { cls: "dry", act: "dry_off", t1: "NA SUCHO", btn: btn ? "Wyłącz" : "",
+             t2: btn ? "panel nie ruszy biurka" : "sprawdź HA" };
+  }
+  return null;
+}
+function startPending(act) {
+  pending = { act: act };
+  clearTimeout(pendingTimer);
+  pendingTimer = setTimeout(() => {
+    const b = bar();
+    if (pending && b && b.act === pending.act) { failUntil = Date.now() + 3000; setTimeout(paint, 3050); }
+    pending = null; paint();
+  }, PENDING_MS);
+  paint();
+}
+function openOverlay() {
+  overlay = true;
+  $("ov").style.display = "flex";
+  $("ok").disabled = true;
+  clearTimeout(okTimer); okTimer = setTimeout(() => { $("ok").disabled = false; }, OK_DELAY_MS);
+  $("no").focus();
+}
+function closeOverlay() {
+  if (!overlay) return;
+  overlay = false;
+  clearTimeout(okTimer);
+  $("ov").style.display = "none";
+}
 
 // A press lights the button for at least 180 ms, so even a quick tap is seen.
 function flash(el, cls = "press", ms = 180) {
@@ -115,10 +189,29 @@ function paint() {
   const hEl = $("h");
   if (state.stale || state.h === null) { hEl.textContent = "--.-"; hEl.classList.add("stale"); }
   else { hEl.textContent = state.h.toFixed(1); hEl.classList.remove("stale"); }
+  // Dry run is never "ready": the yellow light, like the amber bar.
   const light = (state.stale || state.offline || state.locked) ? "lr"
-              : (moving || queue.goto || queue.preset) ? "ly" : "lg";
+              : (moving || queue.goto || queue.preset || (bar() && bar().cls === "dry")) ? "ly" : "lg";
   for (const id of ["lg", "ly", "lr"]) $(id).classList.toggle("on", id === light);
-  $("st").textContent = state.stale ? "brak danych z HA" : moving ? "w ruchu…" : "połączono";
+  const b = bar();
+  if (b && editing) editing = false;
+  if (pending && (!b || b.act !== pending.act)) { pending = null; clearTimeout(pendingTimer); }
+  if (!b || b.act !== "unlock" || !b.btn) closeOverlay();
+  $("st").textContent = state.stale ? "brak danych z HA" : b ? (b.cls === "lock" ? "zablokowany" : "na sucho")
+                      : moving ? "w ruchu…" : "połączono";
+  $("set").style.display = b ? "none" : "";
+  const bn = $("bn");
+  bn.style.display = b ? "flex" : "none";
+  if (b) {
+    const failed = Date.now() < failUntil;
+    bn.className = b.cls + (failed ? " bad" : "");
+    $("b1").textContent = b.t1;
+    $("b2").textContent = failed ? (b.act === "unlock" ? "nie zdjęto" : "nie wyłączono") : b.t2;
+    const bb = $("bb");
+    bb.style.display = b.btn ? "" : "none";
+    bb.textContent = pending ? "…" : b.btn;
+    bb.classList.toggle("wait", !!pending);
+  }
   const pr = $("pr"); pr.innerHTML = "";
   for (const p of state.presets) {
     const b = document.createElement("button"); b.className = "pb"; b.dataset.n = p.n;
@@ -146,12 +239,14 @@ function typed() {
 function startEdit() { editing = true; paint(); }
 function endEdit() { editing = false; paint(); }
 function nudge(d) {
+  if (bar()) return;
   const base = editing && typed() !== null ? typed() : state.h;
   if (base === null || base === undefined) return;
   $("tv").value = (Math.round((base + d) * 10) / 10).toFixed(1);
   editing = true; paint();
 }
 function go() {
+  if (bar()) return;
   flash($("go"));
   const h = typed();
   if (!editing || h === null) { if (editing) flash($("tv"), "bad", 600); return; }
@@ -162,7 +257,8 @@ function go() {
 if (wv) wv.addEventListener("message", e => {
   const m = e.data;
   if (m.type === "state") {
-    state = { h: m.h, status: m.status || "", presets: m.presets || [], locked: !!m.locked, stale: !!m.stale, offline: !!m.offline };
+    state = { h: m.h, status: m.status || "", presets: m.presets || [], locked: !!m.locked, lock: m.lock || "",
+              dry: typeof m.dry === "string" ? m.dry : null, api: m.api || 0, stale: !!m.stale, offline: !!m.offline };
     paint();
   } else if (m.type === "queue") {
     queue = { goto: m.goto || 0, preset: m.preset || 0 };
@@ -188,6 +284,7 @@ if (wv) wv.addEventListener("message", e => {
     $("tv").focus();
   } else if (m.type === "hidden") {
     passive = false;
+    closeOverlay();
     endEdit();
   }
 });
@@ -208,12 +305,44 @@ $("stop").addEventListener("click", () => { endEdit(); send({ type: "stop" }); }
 $("hide").addEventListener("click", () => send({ type: "hide" }));
 $("gear").addEventListener("click", () => { if ($("gear").classList.contains("upd")) send({ type: "update" }); });
 // A click anywhere in the meeting panel (before the button under it acts) tells PowerShell to make it active.
-document.addEventListener("pointerdown", () => { if (passive) { passive = false; send({ type: "activate" }); } }, true);
+// On the bar or the confirmation that first click only wakes the panel: turning dry run off needs a second one.
+document.addEventListener("pointerdown", e => {
+  swallow = false;
+  if (!passive) return;
+  passive = false; send({ type: "activate" });
+  if (e.target.closest && e.target.closest("#bn, #ov")) { swallow = true; e.preventDefault(); e.stopPropagation(); }
+}, true);
+document.addEventListener("click", e => { if (swallow) { swallow = false; e.preventDefault(); e.stopPropagation(); } }, true);
+$("bb").addEventListener("click", () => {
+  const b = bar();
+  if (!b || !b.btn || pending) return;
+  if (b.act === "dry_off") { send({ type: "dry_off" }); startPending("dry_off"); }
+  else openOverlay();
+});
+$("ok").addEventListener("click", () => {
+  if ($("ok").disabled || !overlay) return;
+  closeOverlay();
+  send({ type: "unlock" });
+  startPending("unlock");
+});
+$("no").addEventListener("click", closeOverlay);
 // Keys while the panel is open and active: arrows or F13/F14 change the number (a keyboard dial can send
 // these, one key per notch), Enter goes, F15 = stop, Esc drops the typed height, or hides the panel.
 const KEYS = { ArrowUp: "up", F13: "up", ArrowDown: "down", F14: "down" };
 window.addEventListener("keydown", e => {
   if (passive) { e.preventDefault(); return; }
+  if (e.key === "F15") { e.preventDefault(); endEdit(); flash($("stop")); send({ type: "stop" }); return; }
+  // The confirmation: Esc cancels; Enter unlocks only from a focused, enabled "Zdejmij", otherwise it cancels.
+  if (overlay) {
+    if (e.key === "Escape") { e.preventDefault(); closeOverlay(); }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      if (!e.repeat && document.activeElement === $("ok") && !$("ok").disabled) $("ok").click(); else closeOverlay();
+    }
+    return;
+  }
+  // With the bar shown, no key changes or sends a height.
+  if (bar()) { if (e.key === "Escape") send({ type: "hide" }); else if (KEYS[e.key] || e.key === "Enter") e.preventDefault(); return; }
   if (KEYS[e.key]) {
     e.preventDefault();
     flash($(KEYS[e.key]));

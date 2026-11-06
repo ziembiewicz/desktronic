@@ -245,6 +245,32 @@ Describe 'ConvertFrom-DeskPush meeting' {
     }
 }
 
+Describe 'ConvertFrom-DeskPush dry and lock' {
+    $base = '"h":"85.0","status":"Idle","m":[]'
+    It 'gives no dry run state when the push has no dry field (Home Assistant before api 3)' {
+        $p = ConvertFrom-DeskPush "{$base,`"locked`":`"off`",`"api`":2}"
+        $null -eq $p.dry | Should Be $true
+    }
+    It 'passes on and off, and anything else as other' {
+        (ConvertFrom-DeskPush "{$base,`"locked`":`"off`",`"dry`":`"on`"}").dry | Should Be 'on'
+        (ConvertFrom-DeskPush "{$base,`"locked`":`"off`",`"dry`":`"off`"}").dry | Should Be 'off'
+        (ConvertFrom-DeskPush "{$base,`"locked`":`"off`",`"dry`":`"unknown`"}").dry | Should Be 'other'
+        (ConvertFrom-DeskPush "{$base,`"locked`":`"off`",`"dry`":`"unavailable`"}").dry | Should Be 'other'
+        (ConvertFrom-DeskPush "{$base,`"locked`":`"off`",`"dry`":null}").dry | Should Be 'other'
+        (ConvertFrom-DeskPush "{$base,`"locked`":`"off`",`"dry`":`"ON`"}").dry | Should Be 'other'
+        (ConvertFrom-DeskPush "{$base,`"locked`":`"off`",`"dry`":[`"on`"]}").dry | Should Be 'other'
+    }
+    It 'keeps the lock as on, off or other, and locked true for anything but off' {
+        $on = ConvertFrom-DeskPush "{$base,`"locked`":`"on`"}"
+        $on.lock | Should Be 'on'; $on.locked | Should Be $true
+        $off = ConvertFrom-DeskPush "{$base,`"locked`":`"off`"}"
+        $off.lock | Should Be 'off'; $off.locked | Should Be $false
+        $u = ConvertFrom-DeskPush "{$base,`"locked`":`"unavailable`"}"
+        $u.lock | Should Be 'other'; $u.locked | Should Be $true
+        (ConvertFrom-DeskPush "{$base}").lock | Should Be 'other'
+    }
+}
+
 Describe 'Get-DeskMeetingAction' {
     $never = [datetime]::MinValue
     It 'shows a hidden panel when the page is ready and nothing muted it' {

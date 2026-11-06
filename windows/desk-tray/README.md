@@ -36,8 +36,21 @@ Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC
   range, or less than 5 mm away) flashes the field red. Hiding the panel empties the queue too: the desk never
   moves on its own while nobody looks at the panel.
 - The preset the desk stands at glows green.
-- Status lights under the height, one lit at a time: **green** ready · **yellow** moving or a command waits ·
-  **red** locked, no data from Home Assistant, or Home Assistant does not answer.
+- Status lights under the height, one lit at a time: **green** ready · **yellow** moving, a command waits or dry
+  run · **red** locked, no data from Home Assistant, or Home Assistant does not answer.
+- **A bar when the panel cannot move the desk** (Home Assistant side api 3 or newer). In place of the "Ustaw" row,
+  on a block of colour, with the same word in the header instead of "połączono":
+  - amber **NA SUCHO** — *panel nie ruszy biurka*: **Desk panel dry run** is on. **Wyłącz** turns it off; a move
+    clicked during dry run and still waiting is dropped first, so it cannot become a real move.
+  - red **ZABLOKOWANY** — *panel nie ruszy biurka*: **Desk panel locked** is on. **Zdejmij** opens a confirmation
+    ("Obejrzałem biurko, na wyświetlaczu pilota nie ma E13 — zdejmij"); its **Zdejmij** works only after 0.6 s,
+    Enter and Esc cancel, the stop button stays reachable. Home Assistant unlocks only while the desk stands
+    (status Idle, a numeric height unchanged for 3 s, the board up for 30 s); the logbook says why it refused.
+  - The lock wins when both are on. A helper that is neither on nor off shows *sprawdź HA* and no button; with an
+    older Home Assistant side the lock shows *zdejmij w HA* and there is no dry run bar.
+  - While the bar shows, keys do not change or send a height. A button that had no effect within 10 s flashes the
+    bar with *nie wyłączono* / *nie zdjęto*. On a meeting panel that showed by itself, the first click only wakes it.
+  - The meeting reminder does not look at either helper: it can still raise the desk in dry run or while locked.
 - No Home Assistant token on the PC, no third-party agent, no MQTT. The PC only calls two webhooks and listens
   for pushes from Home Assistant's address.
 
@@ -205,7 +218,10 @@ the older one. With the starter, use the dot on the tray icon; Exit ends the pan
 While **Desk panel dry run** is on (or missing), Home Assistant writes every move and stop to the logbook as
 `DRY ...` and the desk does not move. All guards still run, so every refusal can be tried safely. In dry run a
 command may carry `"test": {"h": 58.2}`, `{"busy": true}` or `{"boot_age": 5}` to fake a height, a busy desk or
-a fresh boot; outside dry run `test` is ignored. Clear **Desk panel moves** before you turn dry run off.
+a fresh boot; outside dry run `test` is ignored. `unlock` takes only `{"busy": true}`, to try its refusal.
+Turning dry run off (here or with the panel's **Wyłącz**) and unlocking change only helpers and work in dry run too.
+Moves booked during dry run stay in **Desk panel moves** and count against the budget and the motor time for up to
+10 minutes: clear that helper after a long dry run test.
 
 ## Check
 
@@ -221,5 +237,6 @@ a fresh boot; outside dry run `test` is ignored. Clear **Desk panel moves** befo
 - Presets changed on the handset reach Home Assistant only when the board restarts: until then the panel shows
   the old heights and a preset button goes to the old height.
 - Plain HTTP on the LAN: the token and the webhook IDs are visible on the network. The webhooks are `local_only`,
-  so anyone on the home network who knows an ID can send a command; the guards still apply.
+  so anyone on the home network who knows an ID can send a command; the guards still apply. `dry_off` has no
+  guard and `unlock` only its "the desk stands" condition: the confirmation exists on the PC only.
 - One PC only: Home Assistant pushes to one address.
