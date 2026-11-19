@@ -8,6 +8,7 @@ heights and a red stop, and below them a row to set a height and go there.
                  ┌──────────── push: height, status, presets, refusals (LAN, token) ───────────┐
                  │                                                                              │
 Home Assistant ──┘   desk_panel_push ──rest_command──>  http://<PC>:8765/desk/  ──>  desk-tray.ps1 ──> panel
+                     (to both of the PC's addresses at once)
        ^                                                                                │
        └──── desk_panel_cmd  <── webhook {"cmd": "goto" | "preset", "seq"} ─────────────┤
        └──── desk_panel_stop <── webhook (stop) ────────────────────────────────────────┘
@@ -122,8 +123,13 @@ can be seen while the desk rises. Home Assistant sends it only for a step it acc
 
    ```yaml
    desk_panel_push_url: http://192.0.2.20:8765/desk/
+   desk_panel_push_url_2: http://192.0.2.21:8765/desk/
    desk_panel_push_token: <random text, at least 32 characters>
    ```
+
+   The two URLs are the PC's two addresses, for example wired and Wi-Fi: Home Assistant pushes to both at once,
+   so the panel keeps its data whichever adapter the PC uses. Reserve both addresses in DHCP. A PC with one
+   address gets the same URL in both; the panel takes a push that arrives twice like one.
 
    Generate the token on the PC (keep it; it also goes into `config.json` there):
 
@@ -229,8 +235,9 @@ Moves booked during dry run stay in **Desk panel moves** and count against the b
   `Import-Module Pester -RequiredVersion 4.10.1 -Force; Invoke-Pester .\tests`
 - Log: `Get-Content "$env:LOCALAPPDATA\DeskTray\desk-tray.log" -Tail 20` — start, panel open times, dropped
   commands, meeting steps and errors. It never holds the webhook URLs, the token or the pushed data.
-- No height on the panel: is the task running, does the log show `listener=True`, is the PC's address in
-  `desk_panel_push_url` current, and did Home Assistant get a hello (helper **Desk panel last hello**)?
+- No height on the panel: is the task running, does the log show `listener=True`, is one of the PC's addresses
+  in `desk_panel_push_url` or `desk_panel_push_url_2` current (`ipconfig`; after a change run
+  `rest_command.reload`), and did Home Assistant get a hello (helper **Desk panel last hello**)?
 
 ## Known limits
 

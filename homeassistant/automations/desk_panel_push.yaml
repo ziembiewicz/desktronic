@@ -1,5 +1,5 @@
-# Pushes the desk state to the panel on the PC (windows/desk-tray) through rest_command.desk_panel_push:
-# on every change of height, status, presets, the lock or dry run, every 30 s, on the PC's hello and with the result
+# Pushes the desk state to the panel on the PC (windows/desk-tray) through rest_command.desk_panel_push and
+# desk_panel_push_2 at once (the PC's two addresses, see rest_command/desk_panel_push.yaml): on every change of height, status, presets, the lock or dry run, every 30 s, on the PC's hello and with the result
 # of every panel command (desk_panel_result: seq + "ok" or the refusal).
 # Only while the PC said hello in the last 90 s: a PC that is off or asleep gets nothing, so the log does
 # not fill with timeouts. The push carries display data only; no command ever uses a height from the PC.
@@ -31,16 +31,24 @@ conditions:
   value_template: >-
     {{ now().timestamp() - (state_attr('input_datetime.desk_panel_last_hello', 'timestamp') | float(0)) < 90 }}
 actions:
-- action: rest_command.desk_panel_push
-  data:
-    seq: >-
+- variables:
+    push_seq: >-
       {{ trigger.event.data.seq if trigger.platform == 'event'
          and trigger.event.event_type == 'desk_panel_result' else 0 }}
-    result: >-
+    push_result: >-
       {{ trigger.event.data.result if trigger.platform == 'event'
          and trigger.event.event_type == 'desk_panel_result' else '' }}
-  response_variable: push
-  continue_on_error: true
+- parallel:
+  - action: rest_command.desk_panel_push
+    data:
+      seq: "{{ push_seq }}"
+      result: "{{ push_result }}"
+    continue_on_error: true
+  - action: rest_command.desk_panel_push_2
+    data:
+      seq: "{{ push_seq }}"
+      result: "{{ push_result }}"
+    continue_on_error: true
 mode: queued
 max: 2
 max_exceeded: silent
