@@ -1,8 +1,14 @@
 # Add under rest_command: in configuration.yaml. The first rest_command ever needs a Home Assistant
 # restart; later changes need only the action rest_command.reload.
 # In secrets.yaml (never in a repository):
-#   desk_panel_push_url: http://192.0.2.20:8765/desk/      <- the PC's address
+#   desk_panel_push_url: http://192.0.2.20:8765/desk/      <- the PC's address (for example wired)
+#   desk_panel_push_url_2: http://192.0.2.21:8765/desk/    <- the PC's second address (for example Wi-Fi)
 #   desk_panel_push_token: <random, at least 24 bytes>     <- the same value as push_token on the PC
+# Two commands, one per address of the PC: the automations push to both at once, so the panel keeps its data
+# whichever network adapter the PC is on. A PC with one address gets the same URL in both: the panel takes a
+# push that arrives twice like one (the result of a command counts once per seq, a meeting step again only
+# restarts its clock). An address that does not answer costs only its own timeout (2 s), in its own branch.
+# desk_panel_push_2 is desk_panel_push with the other URL (YAML merge key), so the payload is written once.
 # The token travels in plain HTTP inside the LAN; the PC also accepts pushes only from Home Assistant's
 # address (Windows firewall rule, windows/desk-tray/Set-DeskTrayFirewall.ps1).
 # "meeting" is "warn" or "go" only in the push desk_panel_meeting sends when the meeting reminder accepted that
@@ -12,7 +18,7 @@
 # "api" is the version of this Home Assistant side of the panel. Raise it when the payload or the panel
 # commands change; a PC release that needs a newer one is refused by the updater (windows/pc-manifest.json).
 # Replace biurko_xxxxxx with your desk's entity prefix.
-desk_panel_push:
+desk_panel_push: &desk_panel_push
   url: !secret desk_panel_push_url
   method: POST
   content_type: application/json
@@ -32,3 +38,6 @@ desk_panel_push:
         "meeting": meeting | default(''),
         "api": 3} | tojson }}
   timeout: 2
+desk_panel_push_2:
+  <<: *desk_panel_push
+  url: !secret desk_panel_push_url_2
